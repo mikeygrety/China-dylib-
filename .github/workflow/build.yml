@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+# build-avx512.sh — build the AVX512 (FLEX++) dylib locally on your Mac.
+# clang + ldid, arm64 + arm64e, no Theos, no GitHub Actions, no runner minutes.
+#
+# Usage:
+#   ./build-avx512.sh [SRC_DIR] [OUT_NAME]
+#     SRC_DIR   folder with the FLEX source (.m/.c). Default: FLEX
+#     OUT_NAME  output dylib name (no extension). Default: AVX512
+#
+# Requires: Xcode command-line tools (xcrun) + ldid.
+#   Install CLT:  xcode-select --install
+#   Install ldid: brew install ldid
+#
+set -euo pipefail
+
+SRC="${1:-FLEX}"
+OUT="${2:-AVX512}"
+OUTDIR="packages"
+
+# ── Preflight checks ─────────────────────────────────────────────────────────
+if ! xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+  echo "ERROR: iOS SDK not found. Install Xcode + command-line tools:"
+  echo "  xcode-select --install"
+  exit 1
+fi
+if ! command -v ldid >/dev/null 2>&1; then
+  echo "ERROR: ldid not found. Install it:  brew install ldid"
+  exit 1
+fi
+if [ ! -d "$SRC" ]; then
+  echo "ERROR: source dir '$SRC' not found. Contents here:"
+  ls -la
+  exit 1
+fi
+
+SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+CLANG="$(xcrun --sdk iphoneos -f clang)"
+mkdir -p "$OUTDIR" build_slices
+
+# ── Gather sources ───────────────────────────────────────────────────────────
+# De-duplicate by basename so a file present in two repo locations can't
+# double-compile (duplicate-symbol linker errors).
+SOURCES=()
+SEEN_BASES=" "
+while IFS= read -r f; do
+  base=$(basename "$f")
+  case "$SEEN_BASES" in
+    *" $base "*) echo "WARNING: skipping duplicate $f (already have $base)" ;;
+    *) SOURCES+=("$f"); SEEN_BASES="$SEEN_BASES$base " ;;
+  esac
+done < <(find "$SRC" \
+  \( -name '*.m' -o -name '*.mm' -o -name '*.c' \) \
+  -not -path '*/__MACOSX/*' -not -path '*/.git/*' | sort)
+
+if [ "${#SOURCES[@]}" -eq 0 ]; then
+  echo "ERROR: no .m/.mm/.c files under $SRC"
+  exit 1
+fi
+echo "Compiling ${#SOURCES[@]} source files from $SRC ..."
+
+# ── Common flags (mirrors the CI workflow, incl. AVX512 detection renames) ──
+COMMON_FLAGS=(
+  -isysroot "$SDK"
+  -miphoneos-version-min=14.0
+  -dynamiclib
+  -fobjc-arc
+  -DCAPSTONE_HAS_ARM -DCAPSTONE_HAS_ARM64 -DCAPSTONE_HAS_AARCH64 -DCAPSTONE_USE_SYS_DYN_MEM
+  -I"$SRC" -I"$SRC/x" -I"$SRC/x/capstone" -I"$SRC/x/capstone/include"
+  -framework UIKit -framework Foundation -framework CoreGraphics
+  -framework UserNotifications -framework SafariServices
+  -framework SceneKit -framework WebKit -framework QuartzCore
+  -framework ImageIO -framework Photos -framework QuickLook
+  -framework Security -framework AVFoundation -framework CoreMedia
+  -framework LocalAuthentication -framework CFNetwork
+  -lz -lsqlite3 -lc++ -lc++abi
+  -Wl,-segalign,4000
+  -install_name "@rpath/${OUT}.dylib"
+  -w
+)
+
+# ── Build each arch separately, then lipo (keeps arm64e when it links) ──────
+BUILT=()
+for ARCH in arm64 arm64e; do
+  echo "=== Building $ARCH ==="
+  if "$CLANG" -arch "$ARCH" "${COMMON_FLAGS[@]}" \
+       -o "build_slices/${OUT}-${ARCH}.dylib" "${SOURCES[@]}"; then
+    echo "$ARCH OK"
+    BUILT+=("build_slices/${OUT}-${ARCH}.dylib")
+  else
+    echo "WARNING: $ARCH failed to link — continuing without it"
+  fi
+done
+
+if [ "${#BUILT[@]}" -eq 0 ]; then
+  echo "ERROR: no architecture linked successfully"
+  exit 1
+fi
+
+# ── Combine + fakesign ───────────────────────────────────────────────────────
+if [ "${#BUILT[@]}" -eq 1 ]; then
+  cp "${BUILT[0]}" "$OUTDIR/${OUT}.dylib"
+else
+  lipo -create "${BUILT[@]}" -output "$OUTDIR/${OUT}.dylib"
+fi
+
+echo "Fakesigning with ldid..."
+ldid -S "$OUTDIR/${OUT}.dylib"
+
+# ── Report ───────────────────────────────────────────────────────────────────
+echo ""
+echo "✅ Built $OUTDIR/${OUT}.dylib"
+file "$OUTDIR/${OUT}.dylib"
+lipo -info "$OUTDIR/${OUT}.dylib" || true
+ls -lh "$OUTDIR/${OUT}.dylib"
+
+# clean intermediate slices
+rm -rf build_slices
