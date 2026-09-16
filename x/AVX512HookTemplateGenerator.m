@@ -20,11 +20,8 @@
 //
 
 #import "AVX512HookTemplateGenerator.h"
-
 #import <objc/runtime.h>
 #import <objc/message.h>
-
-@class AVX512InspectorDataSource;
 
 #pragma mark - Models
 
