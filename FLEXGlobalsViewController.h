@@ -7,12 +7,14 @@
 //
 
 #import "FLEXFilteringTableViewController.h"
+
 @protocol AVX512GlobalsTableViewControllerDelegate;
 
 typedef NS_ENUM(NSUInteger, AVX512GlobalsSectionKind) {
     AVX512GlobalsSectionProcessAndEvents = 0,
     AVX512GlobalsSectionAppShortcuts,
     AVX512GlobalsSectionMisc,
+    AVX512GlobalsSectionMRzefvTools,
     AVX512GlobalsSectionCount
 };
 
