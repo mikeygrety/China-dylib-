@@ -25,54 +25,80 @@
 #import "FLEXGlobalsSection.h"
 #import "UIBarButtonItem+FLEX.h"
 
+// MRzefv
+#import "MRzefvUIEditor.h"
+
 @interface AVX512GlobalsViewController ()
-// The only shown part of the table view views in a Tables Viewview box is just displayed; empty parts are removed from
+
+// The visible sections displayed by the table view.
 @property (nonatomic) NSArray<AVX512GlobalsSection *> *sections;
-/// All parts of the table view views in all sections, whether or not some part is empty and
+
+/// All sections, including sections which may currently have no visible rows.
 @property (nonatomic, readonly) NSArray<AVX512GlobalsSection *> *allSections;
+
+/// Whether the selected row needs to be manually deselected when appearing.
 @property (nonatomic, readonly) BOOL manuallyDeselectOnAppear;
+
 @end
 
 @implementation AVX512GlobalsViewController
+
 @dynamic sections, allSections;
 
-#pragma mark - Initial initialisation to start-in
+#pragma mark - Section Titles
 
 + (NSString *)globalsTitleForSection:(AVX512GlobalsSectionKind)section {
     switch (section) {
         case AVX512GlobalsSectionProcessAndEvents:
             return @"Process & Events";
+
         case AVX512GlobalsSectionAppShortcuts:
             return @"App Shortcuts";
+
         case AVX512GlobalsSectionMisc:
             return @"Miscellaneous";
+
+        case AVX512GlobalsSectionMRzefvTools:
+            return @"MRzefv Tools";
 
         default:
             @throw NSInternalInconsistencyException;
     }
 }
 
+#pragma mark - Global Entries
+
 + (AVX512GlobalsEntry *)globalsEntryForRow:(AVX512GlobalsRow)row {
     switch (row) {
+
         case AVX512GlobalsRowAppKeychainItems:
             return [AVX512KeychainViewController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowPushNotifications:
             return [AVX512APNSViewController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowAddressInspector:
             return [AVX512AddressExplorerCoordinator avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowBrowseRuntime:
             return [AVX512ObjcRuntimeViewController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowLiveObjects:
             return [AVX512LiveObjectsController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowCookies:
             return [AVX512CookiesViewController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowBrowseBundle:
         case AVX512GlobalsRowBrowseContainer:
             return [AVX512FileBrowserController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowSystemLog:
             return [AVX512SystemLogViewController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowNetworkHistory:
             return [AVX512NetworkMITMViewController avx512_concreteGlobalsEntry:row];
+
         case AVX512GlobalsRowKeyWindow:
         case AVX512GlobalsRowRootViewController:
         case AVX512GlobalsRowProcessInfo:
@@ -95,22 +121,29 @@
         case AVX512GlobalsRowMainThread:
         case AVX512GlobalsRowOperationQueue:
             return [AVX512ObjectExplorerFactory avx512_concreteGlobalsEntry:row];
-            
+
         case AVX512GlobalsRowCount:
         default:
             @throw [NSException
                 exceptionWithName:NSInternalInconsistencyException
-                reason:@"In being in theswitchMissing missing or missed in %globalsSituations and conditions," 
+                reason:@"Missing AVX512 globals row implementation."
                 userInfo:nil
             ];
     }
 }
 
+#pragma mark - Default Sections
+
 + (NSArray<AVX512GlobalsSection *> *)defaultGlobalSections {
     static NSMutableArray<AVX512GlobalsSection *> *sections = nil;
     static dispatch_once_t onceToken;
+
     dispatch_once(&onceToken, ^{
         NSDictionary<NSNumber *, NSArray<AVX512GlobalsEntry *> *> *rowsBySection = @{
+
+            //
+            // Process & Events
+            //
             @(AVX512GlobalsSectionProcessAndEvents) : @[
                 [self globalsEntryForRow:AVX512GlobalsRowNetworkHistory],
                 [self globalsEntryForRow:AVX512GlobalsRowSystemLog],
@@ -119,6 +152,10 @@
                 [self globalsEntryForRow:AVX512GlobalsRowAddressInspector],
                 [self globalsEntryForRow:AVX512GlobalsRowBrowseRuntime],
             ],
+
+            //
+            // App Shortcuts
+            //
             @(AVX512GlobalsSectionAppShortcuts) : @[
                 [self globalsEntryForRow:AVX512GlobalsRowBrowseBundle],
                 [self globalsEntryForRow:AVX512GlobalsRowBrowseContainer],
@@ -132,6 +169,10 @@
                 [self globalsEntryForRow:AVX512GlobalsRowRootViewController],
                 [self globalsEntryForRow:AVX512GlobalsRowCookies],
             ],
+
+            //
+            // Miscellaneous
+            //
             @(AVX512GlobalsSectionMisc) : @[
                 [self globalsEntryForRow:AVX512GlobalsRowPasteboard],
                 [self globalsEntryForRow:AVX512GlobalsRowMainScreen],
@@ -147,26 +188,79 @@
                 [self globalsEntryForRow:AVX512GlobalsRowMainRunLoop],
                 [self globalsEntryForRow:AVX512GlobalsRowMainThread],
                 [self globalsEntryForRow:AVX512GlobalsRowOperationQueue],
+            ],
+
+            //
+            // MRzefv Tools
+            //
+            @(AVX512GlobalsSectionMRzefvTools) : @[
+                [AVX512GlobalsEntry
+                    entryWithNameFuture:^NSString * {
+                        return @"UI Editor";
+                    }
+                    viewControllerFuture:^UIViewController * {
+                        return [[MRzefvUIEditorController alloc] init];
+                    }
+                ],
+
+                [AVX512GlobalsEntry
+                    entryWithNameFuture:^NSString * {
+                        return @"Dylib Generator";
+                    }
+                    action:^(__kindof UITableViewController *host) {
+                        NSLog(@"[MRzefv] Dylib Generator selected.");
+                    }
+                ],
+
+                [AVX512GlobalsEntry
+                    entryWithNameFuture:^NSString * {
+                        return @"Enhanced CFG";
+                    }
+                    action:^(__kindof UITableViewController *host) {
+                        NSLog(@"[MRzefv] Enhanced CFG selected.");
+                    }
+                ],
+
+                [AVX512GlobalsEntry
+                    entryWithNameFuture:^NSString * {
+                        return @"UI Profiles";
+                    }
+                    action:^(__kindof UITableViewController *host) {
+                        NSLog(@"[MRzefv] UI Profiles selected.");
+                    }
+                ]
             ]
         };
 
         sections = [NSMutableArray array];
-        for (AVX512GlobalsSectionKind i = AVX512GlobalsSectionProcessAndEvents; i < AVX512GlobalsSectionCount; ++i) {
+
+        for (AVX512GlobalsSectionKind i = AVX512GlobalsSectionProcessAndEvents;
+             i < AVX512GlobalsSectionCount;
+             ++i) {
+
             NSString *title = [self globalsTitleForSection:i];
-            [sections addObject:[AVX512GlobalsSection title:title rows:rowsBySection[@(i)]]];
+
+            NSArray<AVX512GlobalsEntry *> *rows = rowsBySection[@(i)];
+
+            [sections addObject:
+                [AVX512GlobalsSection title:title rows:rows]
+            ];
         }
     });
-    
+
     return sections;
 }
 
-
-#pragma mark - Re-rewn rewritten
+#pragma mark - View Lifecycle
 
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    // Branded two-line title: AVX512 over "signature.zh by DELvEK.NET"
+    //
+    // Branded two-line title:
+    // AVX512
+    // signature.zh by DELvEK.NET
+    //
     UILabel *titleLine = [[UILabel alloc] init];
     titleLine.text = @"AVX512";
     titleLine.font = [UIFont boldSystemFontOfSize:17];
@@ -175,50 +269,65 @@
 
     UILabel *sigLine = [[UILabel alloc] init];
     sigLine.text = @"signature.zh by DELvEK.NET";
-    sigLine.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+    sigLine.font = [UIFont systemFontOfSize:10
+                                      weight:UIFontWeightSemibold];
     sigLine.textColor = UIColor.systemBlueColor;
     sigLine.textAlignment = NSTextAlignmentCenter;
 
-    UIStackView *titleStack = [[UIStackView alloc] initWithArrangedSubviews:@[titleLine, sigLine]];
+    UIStackView *titleStack =
+        [[UIStackView alloc] initWithArrangedSubviews:@[
+            titleLine,
+            sigLine
+        ]];
+
     titleStack.axis = UILayoutConstraintAxisVertical;
     titleStack.alignment = UIStackViewAlignmentCenter;
     titleStack.spacing = 0;
+
     self.navigationItem.titleView = titleStack;
 
     self.showsSearchBar = YES;
     self.searchBarDebounceInterval = kAVX512DebounceInstant;
-    self.navigationItem.backBarButtonItem = [UIBarButtonItem avx512_backItemWithTitle:@"Back"];
-    
-    _manuallyDeselectOnAppear = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 10;
+
+    self.navigationItem.backBarButtonItem =
+        [UIBarButtonItem avx512_backItemWithTitle:@"Back"];
+
+    _manuallyDeselectOnAppear =
+        NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 10;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    
+
     [self disableToolbar];
-    
+
     if (self.manuallyDeselectOnAppear) {
-        [self.tableView deselectRowAtIndexPath:self.tableView.indexPathForSelectedRow animated:YES];
+        [self.tableView
+            deselectRowAtIndexPath:self.tableView.indexPathForSelectedRow
+                         animated:YES];
     }
 }
 
+#pragma mark - Sections
+
 - (NSArray<AVX512GlobalsSection *> *)makeSections {
-    NSMutableArray<AVX512GlobalsSection *> *sections = [NSMutableArray array];
+    NSMutableArray<AVX512GlobalsSection *> *sections =
+        [NSMutableArray array];
 
     [sections addObjectsFromArray:[self.class defaultGlobalSections]];
 
     return sections;
 }
 
+#pragma mark - Legacy Row Access
+
 - (AVX512GlobalsEntry *)globalsEntryAtIndex:(NSInteger)index {
     AVX512GlobalsRow row = [self globalRowAtIndex:index];
-    
-    // Directly call class methodologies by direct calling category methods to avoid duplication of code and error codes or wrong methodological
+
     return [[self class] globalsEntryForRow:row];
 }
 
 - (AVX512GlobalsRow)globalRowAtIndex:(NSInteger)index {
-    // This is done here in accordance with the actual logic of a project according to practical logical:
     return (AVX512GlobalsRow)index;
 }
 
