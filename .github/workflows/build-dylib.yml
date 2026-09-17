@@ -2,189 +2,154 @@ name: Build AVX512 Dylib
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
   workflow_dispatch:
     inputs:
-      source_dir:
-        description: "Folder containing the FLEX/AVX512 source (.m/.mm/.c files)"
-        required: false
-        default: "."
-
       out_name:
         description: "Output dylib name"
         required: false
         default: "AVX512"
+
+      build_source_zip:
+        description: "Upload source ZIP"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
     runs-on: macos-15
 
     steps:
-      # ------------------------------------------------------------
+      # ---------------------------------------------------------
       # Checkout
-      # ------------------------------------------------------------
-
+      # ---------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------
-      # Toolchain
-      # ------------------------------------------------------------
-
-      - name: Show Xcode
-        run: |
-          xcodebuild -version
-          echo
-          xcrun --sdk iphoneos --show-sdk-path
-          echo
-          xcrun --sdk iphoneos -f clang
-
-      - name: Install ldid
-        run: |
-          brew install ldid
-          ldid --version || true
-
-      # ------------------------------------------------------------
-      # Locate source directory
-      # ------------------------------------------------------------
-
-      - name: Locate source dir
-        id: src
-        env:
-          INPUT_SOURCE_DIR: ${{ github.event.inputs.source_dir }}
+      # ---------------------------------------------------------
+      # Xcode / SDK information
+      # ---------------------------------------------------------
+      - name: Show toolchain
         run: |
           set -euo pipefail
 
-          DIR="${INPUT_SOURCE_DIR:-.}"
+          xcodebuild -version
 
-          if [ -z "$DIR" ]; then
-            DIR="."
-          fi
+          echo
+          echo "iPhoneOS SDK:"
+          xcrun --sdk iphoneos --show-sdk-path
 
-          if [ ! -d "$DIR" ]; then
-            echo "::error::Source dir '$DIR' not found."
-            echo
-            echo "Repository top-level:"
-            ls -la
-            exit 1
-          fi
+          echo
+          echo "Clang:"
+          xcrun --sdk iphoneos -f clang
+
+      # ---------------------------------------------------------
+      # Install ldid
+      # ---------------------------------------------------------
+      - name: Install ldid
+        run: |
+          set -euo pipefail
+
+          brew install ldid
+
+          echo
+          ldid --version || true
+
+      # ---------------------------------------------------------
+      # Locate Objective-C / C / C++ source
+      # ---------------------------------------------------------
+      - name: Locate source files
+        id: source
+        run: |
+          set -euo pipefail
+
+          echo "Repository:"
+          pwd
+
+          echo
+          echo "Source files:"
+
+          find . \
+            \( -name '*.m' -o -name '*.mm' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
+            -not -path './.git/*' \
+            -not -path './__MACOSX/*' \
+            | sort
 
           COUNT="$(
-            find "$DIR" \
-              \( -name '*.m' -o -name '*.mm' -o -name '*.c' \) \
-              -not -path '*/__MACOSX/*' \
-              -not -path '*/.git/*' \
+            find . \
+              \( -name '*.m' -o -name '*.mm' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
+              -not -path './.git/*' \
+              -not -path './__MACOSX/*' \
               | wc -l \
               | tr -d ' '
           )"
 
-          echo "Source directory: $DIR"
-          echo "Found $COUNT Objective-C/C source files."
+          echo
+          echo "Found $COUNT source files."
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "::error::No .m/.mm/.c files under '$DIR'."
-            echo
-            echo "Repository tree:"
-            find "$DIR" -maxdepth 3 -type f | sort | head -300
+            echo "::error::No source files found."
             exit 1
           fi
 
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
-      # ------------------------------------------------------------
-      # Show source layout
-      # ------------------------------------------------------------
-
-      - name: Show source tree
-        env:
-          SRC: ${{ steps.src.outputs.dir }}
-        run: |
-          set -euo pipefail
-
-          echo "========================================"
-          echo "Source directory"
-          echo "========================================"
-          echo "$SRC"
-          echo
-
-          echo "Objective-C/C sources:"
-          find "$SRC" \
-            \( -name '*.m' -o -name '*.mm' -o -name '*.c' \) \
-            -not -path '*/__MACOSX/*' \
-            -not -path '*/.git/*' \
-            | sort
-
-      # ------------------------------------------------------------
-      # Build
-      # ------------------------------------------------------------
-
+      # ---------------------------------------------------------
+      # Build arm64 + arm64e
+      # ---------------------------------------------------------
       - name: Build dylib
         env:
-          SRC: ${{ steps.src.outputs.dir }}
-          OUT: ${{ github.event.inputs.out_name || 'AVX512' }}
+          OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
         run: |
           set -euo pipefail
 
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           CLANG="$(xcrun --sdk iphoneos -f clang)"
 
-          mkdir -p packages
           mkdir -p build_slices
+          mkdir -p packages
 
-          echo "========================================"
-          echo "AVX512 Dylib Build"
-          echo "========================================"
-          echo "SDK:   $SDK"
+          echo "SDK: $SDK"
           echo "Clang: $CLANG"
-          echo "Source: $SRC"
-          echo "Output: $OUT"
-          echo
 
-          # --------------------------------------------------------
+          # -----------------------------------------------------
           # Collect sources
-          #
-          # The basename de-duplication is retained because some
-          # extracted FLEX-style projects contain duplicate files
-          # with the same filename in different directories.
-          # --------------------------------------------------------
+          # -----------------------------------------------------
 
-          SOURCES=()
-          SEEN_BASES=" "
-
-          while IFS= read -r f; do
-            base="$(basename "$f")"
-
-            case "$SEEN_BASES" in
-              *" $base "*)
-                echo "::warning::Skipping duplicate source $f (already have $base)"
-                ;;
-              *)
-                SOURCES+=("$f")
-                SEEN_BASES="$SEEN_BASES$base "
-                ;;
-            esac
-          done < <(
-            find "$SRC" \
-              \( -name '*.m' -o -name '*.mm' -o -name '*.c' \) \
-              -not -path '*/__MACOSX/*' \
-              -not -path '*/.git/*' \
+          mapfile -t SOURCES < <(
+            find . \
+              \( -name '*.m' -o -name '*.mm' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
+              -not -path './.git/*' \
+              -not -path './__MACOSX/*' \
               | sort
           )
 
           if [ "${#SOURCES[@]}" -eq 0 ]; then
-            echo "::error::No compilable source files found."
+            echo "::error::No source files found."
             exit 1
           fi
 
           echo
-          echo "Compiling ${#SOURCES[@]} source files:"
+          echo "Compiling:"
           printf '  %s\n' "${SOURCES[@]}"
-          echo
 
-          # --------------------------------------------------------
-          # Common compiler/linker flags
-          # --------------------------------------------------------
+          # -----------------------------------------------------
+          # Include paths
+          # -----------------------------------------------------
+
+          INCLUDE_FLAGS=(
+            -I.
+            -I./x
+            -I./x/capstone
+            -I./x/capstone/include
+          )
+
+          # -----------------------------------------------------
+          # Common compiler flags
+          # -----------------------------------------------------
 
           COMMON_FLAGS=(
             -isysroot "$SDK"
@@ -198,27 +163,19 @@ jobs:
             -DCAPSTONE_HAS_AARCH64
             -DCAPSTONE_USE_SYS_DYN_MEM
 
-            -I"$SRC"
-            -I"$SRC/x"
-            -I"$SRC/x/capstone"
-            -I"$SRC/x/capstone/include"
+            "${INCLUDE_FLAGS[@]}"
 
-            -framework UIKit
             -framework Foundation
+            -framework UIKit
             -framework CoreGraphics
-            -framework UserNotifications
-            -framework SafariServices
+            -framework QuartzCore
             -framework SceneKit
             -framework WebKit
-            -framework QuartzCore
-            -framework ImageIO
-            -framework Photos
-            -framework QuickLook
             -framework Security
             -framework AVFoundation
             -framework CoreMedia
-            -framework LocalAuthentication
             -framework CFNetwork
+            -framework LocalAuthentication
 
             -lz
             -lsqlite3
@@ -227,193 +184,237 @@ jobs:
 
             -Wl,-segalign,4000
 
-            -install_name "@rpath/${OUT}.dylib"
+            -install_name "@rpath/${OUT_NAME}.dylib"
 
             -w
           )
 
           BUILT=()
 
-          # --------------------------------------------------------
+          # -----------------------------------------------------
           # arm64
-          # --------------------------------------------------------
+          # -----------------------------------------------------
 
+          echo
           echo "========================================"
           echo "Building arm64"
           echo "========================================"
 
           if "$CLANG" \
-              -arch arm64 \
-              "${COMMON_FLAGS[@]}" \
-              -o "build_slices/${OUT}-arm64.dylib" \
-              "${SOURCES[@]}"; then
-
+            -arch arm64 \
+            "${COMMON_FLAGS[@]}" \
+            -o "build_slices/${OUT_NAME}-arm64.dylib" \
+            "${SOURCES[@]}"
+          then
             echo "arm64 build succeeded."
-            BUILT+=("build_slices/${OUT}-arm64.dylib")
-
+            BUILT+=("build_slices/${OUT_NAME}-arm64.dylib")
           else
-
-            echo "::warning::arm64 failed to link."
-
+            echo "::warning::arm64 build failed."
           fi
 
-          # --------------------------------------------------------
+          # -----------------------------------------------------
           # arm64e
-          # --------------------------------------------------------
+          # -----------------------------------------------------
 
+          echo
           echo "========================================"
           echo "Building arm64e"
           echo "========================================"
 
           if "$CLANG" \
-              -arch arm64e \
-              "${COMMON_FLAGS[@]}" \
-              -o "build_slices/${OUT}-arm64e.dylib" \
-              "${SOURCES[@]}"; then
-
+            -arch arm64e \
+            "${COMMON_FLAGS[@]}" \
+            -o "build_slices/${OUT_NAME}-arm64e.dylib" \
+            "${SOURCES[@]}"
+          then
             echo "arm64e build succeeded."
-            BUILT+=("build_slices/${OUT}-arm64e.dylib")
-
+            BUILT+=("build_slices/${OUT_NAME}-arm64e.dylib")
           else
-
-            echo "::warning::arm64e failed to link."
-
+            echo "::warning::arm64e build failed."
           fi
 
-          # --------------------------------------------------------
-          # Verify architecture output
-          # --------------------------------------------------------
+          # -----------------------------------------------------
+          # Verify something actually built
+          # -----------------------------------------------------
 
           if [ "${#BUILT[@]}" -eq 0 ]; then
-            echo "::error::No architecture linked successfully."
+            echo "::error::No architectures built successfully."
             exit 1
           fi
 
-          # --------------------------------------------------------
-          # Create universal dylib
-          # --------------------------------------------------------
+          # -----------------------------------------------------
+          # Universal dylib
+          # -----------------------------------------------------
 
+          echo
           echo "========================================"
-          echo "Packaging"
+          echo "Creating universal dylib"
           echo "========================================"
 
           if [ "${#BUILT[@]}" -eq 1 ]; then
-
-            cp \
-              "${BUILT[0]}" \
-              "packages/${OUT}.dylib"
-
+            cp "${BUILT[0]}" "packages/${OUT_NAME}.dylib"
           else
-
-            lipo -create \
+            lipo \
+              -create \
               "${BUILT[@]}" \
-              -output "packages/${OUT}.dylib"
-
+              -output "packages/${OUT_NAME}.dylib"
           fi
 
-          # --------------------------------------------------------
-          # Code sign with ldid
-          # --------------------------------------------------------
+          # -----------------------------------------------------
+          # Ad-hoc sign
+          # -----------------------------------------------------
 
-          echo "========================================"
-          echo "Signing"
-          echo "========================================"
+          echo
+          echo "Signing dylib..."
 
-          ldid -S "packages/${OUT}.dylib"
+          ldid -S "packages/${OUT_NAME}.dylib"
 
-          # --------------------------------------------------------
-          # Inspect result
-          # --------------------------------------------------------
+          for dylib in build_slices/*.dylib; do
+            ldid -S "$dylib" || true
+          done
+
+          # -----------------------------------------------------
+          # Inspect output
+          # -----------------------------------------------------
 
           echo
           echo "========================================"
-          echo "Final dylib"
+          echo "Build results"
           echo "========================================"
 
-          file "packages/${OUT}.dylib"
+          file "packages/${OUT_NAME}.dylib"
 
           echo
-          echo "Architecture information:"
-          lipo -info "packages/${OUT}.dylib" || true
+          lipo -info "packages/${OUT_NAME}.dylib" || true
 
           echo
-          echo "Dylib information:"
-          ls -lh "packages/${OUT}.dylib"
-
-          echo
-          echo "Slice files:"
+          ls -lh packages/
           ls -lh build_slices/
 
-      # ------------------------------------------------------------
-      # Upload dylib
-      # ------------------------------------------------------------
+      # ---------------------------------------------------------
+      # Verify Mach-O architectures
+      # ---------------------------------------------------------
+      - name: Verify universal dylib
+        env:
+          OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
+        run: |
+          set -euo pipefail
 
-      - name: Upload dylib
+          DYLIB="packages/${OUT_NAME}.dylib"
+
+          test -f "$DYLIB"
+
+          echo "File:"
+          file "$DYLIB"
+
+          echo
+          echo "Architectures:"
+          lipo -info "$DYLIB"
+
+          echo
+          echo "Load commands:"
+          otool -L "$DYLIB" || true
+
+      # ---------------------------------------------------------
+      # Generate build manifest
+      # ---------------------------------------------------------
+      - name: Generate build manifest
+        env:
+          OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
+        run: |
+          set -euo pipefail
+
+          cat > packages/build-info.txt <<EOF
+          AVX512 Dylib Build
+          ==================
+
+          Name: ${OUT_NAME}.dylib
+
+          Commit:
+          ${GITHUB_SHA}
+
+          Branch:
+          ${GITHUB_REF_NAME}
+
+          Runner:
+          ${RUNNER_OS}
+
+          Xcode:
+          $(xcodebuild -version | tr '\n' ' ')
+
+          SDK:
+          $(xcrun --sdk iphoneos --show-sdk-path)
+
+          Architectures:
+          $(lipo -info "packages/${OUT_NAME}.dylib" 2>&1)
+
+          File:
+          $(file "packages/${OUT_NAME}.dylib")
+          EOF
+
+          cat packages/build-info.txt
+
+      # ---------------------------------------------------------
+      # Upload universal dylib
+      # ---------------------------------------------------------
+      - name: Upload universal dylib
         uses: actions/upload-artifact@v4
         with:
-          name: AVX512-dylib-${{ github.sha }}
+          name: AVX512-universal-${{ github.sha }}
           path: packages/*.dylib
           if-no-files-found: error
           retention-days: 30
 
-      # ------------------------------------------------------------
+      # ---------------------------------------------------------
       # Upload individual architecture slices
-      # ------------------------------------------------------------
-
+      # ---------------------------------------------------------
       - name: Upload architecture slices
         uses: actions/upload-artifact@v4
         with:
-          name: AVX512-build-slices-${{ github.sha }}
+          name: AVX512-slices-${{ github.sha }}
           path: build_slices/*.dylib
           if-no-files-found: error
           retention-days: 30
 
-      # ------------------------------------------------------------
-      # Package source project
-      # ------------------------------------------------------------
+      # ---------------------------------------------------------
+      # Upload build information
+      # ---------------------------------------------------------
+      - name: Upload build info
+        uses: actions/upload-artifact@v4
+        with:
+          name: AVX512-build-info-${{ github.sha }}
+          path: packages/build-info.txt
+          if-no-files-found: error
+          retention-days: 30
 
-      - name: Package source project
+      # ---------------------------------------------------------
+      # Package source
+      # ---------------------------------------------------------
+      - name: Package source
+        if: ${{ github.event.inputs.build_source_zip != 'false' }}
         env:
-          SRC: ${{ steps.src.outputs.dir }}
-          OUT: ${{ github.event.inputs.out_name || 'AVX512' }}
+          OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
         run: |
           set -euo pipefail
 
-          mkdir -p packages/project
-
-          echo "Creating source archive..."
-
           zip -r \
-            "packages/${OUT}-source.zip" \
-            "$SRC" \
-            -x '*/.git/*' \
-            -x '*/__MACOSX/*'
+            "packages/${OUT_NAME}-source.zip" \
+            . \
+            -x './.git/*' \
+            -x './__MACOSX/*' \
+            -x './packages/*' \
+            -x './build_slices/*'
 
-          echo "Created:"
-          ls -lh "packages/${OUT}-source.zip"
+          ls -lh "packages/${OUT_NAME}-source.zip"
 
-      # ------------------------------------------------------------
-      # Upload source archive
-      # ------------------------------------------------------------
-
-      - name: Upload source project
+      # ---------------------------------------------------------
+      # Upload source
+      # ---------------------------------------------------------
+      - name: Upload source ZIP
+        if: ${{ github.event.inputs.build_source_zip != 'false' }}
         uses: actions/upload-artifact@v4
         with:
           name: AVX512-source-${{ github.sha }}
           path: packages/*-source.zip
           if-no-files-found: error
           retention-days: 30
-
-      # ------------------------------------------------------------
-      # Release on tag
-      # ------------------------------------------------------------
-
-      - name: Release on tag
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            packages/*.dylib
-            packages/*-source.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
