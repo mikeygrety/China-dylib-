@@ -2146,7 +2146,7 @@ UISearchResultsUpdating
       "## Build output\n\n"
       "The build produces architecture-specific dylibs and a "
       "combined universal dylib when the toolchain supports both "
-      "requested architectures.\n";
+      "requested architectures.\n"];
 
     return readme;
 }
