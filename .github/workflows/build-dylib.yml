@@ -55,18 +55,29 @@ jobs:
           CLANG=$(xcrun --sdk iphoneos -f clang)
           mkdir -p packages build_slices
 
-          # The generator emits a large Objective-C string. Close its appendString:
-          # message before compiling, and fail if the expected source is not present.
+          # Make the generator patch idempotent:
+          # - patch only the legacy broken string literal
+          # - if it's already fixed, skip quietly
+          # - fail only if neither the legacy nor the fixed marker exists
           python3 - "$SRC/x/AVX512HookTemplateGenerator.m" <<'PY'
           import pathlib
           import sys
+
           path = pathlib.Path(sys.argv[1])
           text = path.read_text()
-          needle = '"}\\n";\\n\\n    if (dylibType'
-          replacement = '"}\\n"];\\n\\n    if (dylibType'
-          if text.count(needle) != 1:
-              raise SystemExit("expected exactly one unterminated generated-string message")
-          path.write_text(text.replace(needle, replacement))
+
+          legacy = '"}\\n";\n\n    if (dylibType'
+          fixed = '"}\\n"];\n\n    if (dylibType'
+
+          if legacy in text:
+              if text.count(legacy) != 1:
+                  raise SystemExit("expected exactly one legacy generated-string message")
+              path.write_text(text.replace(legacy, fixed, 1))
+              print("patched legacy generated-string issue")
+          elif fixed in text:
+              print("generator already contains the fixed string literal; no patch needed")
+          else:
+              raise SystemExit("could not find expected generated-string marker in AVX512HookTemplateGenerator.m")
           PY
 
           SOURCES=()
