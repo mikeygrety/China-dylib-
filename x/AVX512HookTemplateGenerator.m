@@ -2,7 +2,7 @@
 //  AVX512HookTemplateGenerator.m
 //  AVX512 by DELvEK.NET
 //
-//  Runtime recon -> project generator.
+//  Runtime explorer + diagnostic dylib generator.
 //
 //  Generated project:
 //
@@ -14,10 +14,7 @@
 //      OR
 //      └── .github/workflows/build.yml
 //
-//  The generated dylib is a diagnostic/test harness.
-//  It records selected runtime metadata and provides explicit
-//  install/diagnostic entry points without guessing arbitrary
-//  Objective-C method ABIs.
+//  Signature.zh · MrZEfv
 //
 
 #import "AVX512HookTemplateGenerator.h"
@@ -31,6 +28,7 @@
 @property (nonatomic, copy) NSString *typeEncoding;
 @property (nonatomic, copy) NSString *returnType;
 @property (nonatomic, assign) BOOL declaredDirectly;
+@property (nonatomic, copy) NSString *declaringClass;
 
 @end
 
@@ -63,6 +61,171 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
 };
 
 
+#pragma mark - Method Detail Controller
+
+@interface AVX512MethodDetailViewController : UITableViewController
+
+@property (nonatomic, strong) AVX512MethodInfo *methodInfo;
+@property (nonatomic, copy) NSString *className;
+
+- (instancetype)initWithMethod:(AVX512MethodInfo *)method
+                      className:(NSString *)className;
+
+@end
+
+
+@implementation AVX512MethodDetailViewController
+
+- (instancetype)initWithMethod:(AVX512MethodInfo *)method
+                      className:(NSString *)className
+{
+    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+
+    if (self) {
+        _methodInfo = method;
+        _className = [className copy];
+    }
+
+    return self;
+}
+
+- (void)viewDidLoad
+{
+    [super viewDidLoad];
+
+    self.title = @"Method Details";
+
+    self.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc]
+            initWithBarButtonSystemItem:UIBarButtonSystemItemClose
+                                 target:self
+                                 action:@selector(close)];
+
+    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.estimatedRowHeight = 80.0;
+}
+
+- (void)close
+{
+    if (self.navigationController.presentingViewController) {
+        [self.navigationController
+            dismissViewControllerAnimated:YES
+                               completion:nil];
+    } else {
+        [self.navigationController popViewControllerAnimated:YES];
+    }
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
+{
+    return 5;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView
+ numberOfRowsInSection:(NSInteger)section
+{
+    return 1;
+}
+
+- (NSString *)titleForSection:(NSInteger)section
+{
+    switch (section) {
+
+        case 0:
+            return @"SELECTOR";
+
+        case 1:
+            return @"RETURN TYPE";
+
+        case 2:
+            return @"OBJECTIVE-C TYPE ENCODING";
+
+        case 3:
+            return @"ORIGIN";
+
+        case 4:
+            return @"ABOUT THIS DATA";
+
+        default:
+            return @"";
+    }
+}
+
+- (NSString *)textForSection:(NSInteger)section
+{
+    AVX512MethodInfo *method = self.methodInfo;
+
+    switch (section) {
+
+        case 0:
+            return method.selectorName ?: @"—";
+
+        case 1:
+            return method.returnType ?: @"?";
+
+        case 2:
+            return method.typeEncoding ?: @"?";
+
+        case 3:
+            return method.declaredDirectly
+                ? [NSString stringWithFormat:
+                    @"Declared directly by %@", self.className]
+                : [NSString stringWithFormat:
+                    @"Inherited by %@", self.className];
+
+        case 4:
+            return
+                @"The selector is the runtime name used to identify "
+                @"the method. The Objective-C type encoding describes "
+                @"its method ABI, including the return value and "
+                @"arguments. AVX512 exposes the raw encoding instead "
+                @"of guessing an arbitrary Objective-C function "
+                @"signature.";
+
+        default:
+            return @"";
+    }
+}
+
+- (NSString *)tableView:(UITableView *)tableView
+titleForHeaderInSection:(NSInteger)section
+{
+    return [self titleForSection:section];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView
+         cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    UITableViewCell *cell =
+        [tableView dequeueReusableCellWithIdentifier:@"MethodDetailCell"];
+
+    if (!cell) {
+
+        cell =
+            [[UITableViewCell alloc]
+                initWithStyle:UITableViewCellStyleSubtitle
+                reuseIdentifier:@"MethodDetailCell"];
+    }
+
+    NSString *text =
+        [self textForSection:indexPath.section];
+
+    cell.textLabel.text = text;
+    cell.textLabel.numberOfLines = 0;
+
+    cell.textLabel.font =
+        [UIFont monospacedSystemFontOfSize:
+            indexPath.section == 4 ? 13.0 : 14.0
+                                   weight:UIFontWeightRegular];
+
+    cell.detailTextLabel.text = nil;
+
+    return cell;
+}
+
+@end
+
+
 #pragma mark - Generator
 
 @interface AVX512HookTemplateGenerator () <UISearchResultsUpdating>
@@ -83,13 +246,14 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
 {
     [super viewDidLoad];
 
-    self.title = @"Dylib Generator";
+    self.title = @"Runtime Explorer";
 
-    self.selectedClasses = [NSMutableSet set];
+    self.selectedClasses =
+        [NSMutableSet set];
 
     [self loadRuntimeClasses];
     [self configureSearch];
-    [self configureGenerateButton];
+    [self configureSignatureButton];
 }
 
 #pragma mark - Runtime Recon
@@ -98,7 +262,8 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
 {
     unsigned int count = 0;
 
-    Class *classes = objc_copyClassList(&count);
+    Class *classes =
+        objc_copyClassList(&count);
 
     NSMutableArray<NSString *> *names =
         [NSMutableArray arrayWithCapacity:count];
@@ -111,7 +276,8 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
             continue;
         }
 
-        const char *name = class_getName(cls);
+        const char *name =
+            class_getName(cls);
 
         if (!name) {
             continue;
@@ -127,13 +293,17 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
 
     free(classes);
 
-    [names sortUsingComparator:^NSComparisonResult(NSString *a,
-                                                    NSString *b) {
+    [names sortUsingComparator:
+        ^NSComparisonResult(NSString *a, NSString *b) {
+
         return [a caseInsensitiveCompare:b];
     }];
 
-    self.allClasses = [names copy];
-    self.filteredClasses = [names copy];
+    self.allClasses =
+        [names copy];
+
+    self.filteredClasses =
+        [names copy];
 }
 
 #pragma mark - Search
@@ -144,16 +314,20 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
         [[UISearchController alloc]
             initWithSearchResultsController:nil];
 
-    self.search.searchResultsUpdater = self;
+    self.search.searchResultsUpdater =
+        self;
 
-    self.search.obscuresBackgroundDuringPresentation = NO;
+    self.search.obscuresBackgroundDuringPresentation =
+        NO;
 
     self.search.searchBar.placeholder =
         @"Search runtime classes";
 
-    self.navigationItem.searchController = self.search;
+    self.navigationItem.searchController =
+        self.search;
 
-    self.definesPresentationContext = YES;
+    self.definesPresentationContext =
+        YES;
 }
 
 - (void)updateSearchResultsForSearchController:
@@ -164,7 +338,8 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
 
     if (query.length == 0) {
 
-        self.filteredClasses = self.allClasses;
+        self.filteredClasses =
+            self.allClasses;
 
     } else {
 
@@ -173,39 +348,81 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
                 @"SELF CONTAINS[cd] %@", query];
 
         self.filteredClasses =
-            [self.allClasses filteredArrayUsingPredicate:predicate];
+            [self.allClasses
+                filteredArrayUsingPredicate:predicate];
     }
 
     [self.tableView reloadData];
 }
 
-#pragma mark - Generate Button
+#pragma mark - Signature.zh
 
-- (void)configureGenerateButton
+- (void)configureSignatureButton
 {
+    UIButton *button =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+
+    UIImage *image =
+        [UIImage systemImageNamed:@"signature"];
+
+    if (image) {
+        [button setImage:image
+                forState:UIControlStateNormal];
+    }
+
+    [button setTitle:@"  Signature.zh · MrZEfv"
+            forState:UIControlStateNormal];
+
+    button.titleLabel.font =
+        [UIFont systemFontOfSize:14.0
+                           weight:UIFontWeightSemibold];
+
+    button.accessibilityLabel =
+        @"Signature.zh by MrZEfv";
+
+    button.accessibilityHint =
+        @"Build a diagnostic dylib from the selected runtime classes.";
+
+    [button addTarget:self
+               action:@selector(generateProject)
+     forControlEvents:UIControlEventTouchUpInside];
+
+    [button sizeToFit];
+
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc]
-            initWithTitle:@"Generate"
-            style:UIBarButtonItemStyleDone
-            target:self
-            action:@selector(generateProject)];
+            initWithCustomView:button];
 
-    [self updateGenerateButton];
+    [self updateSignatureButton];
 }
 
-- (void)updateGenerateButton
+- (void)updateSignatureButton
 {
-    NSUInteger count = self.selectedClasses.count;
+    UIButton *button =
+        (UIButton *)self.navigationItem
+            .rightBarButtonItem.customView;
 
-    self.navigationItem.rightBarButtonItem.enabled =
-        count > 0;
+    if (![button isKindOfClass:[UIButton class]]) {
+        return;
+    }
 
-    self.navigationItem.rightBarButtonItem.title =
+    NSUInteger count =
+        self.selectedClasses.count;
+
+    NSString *title =
         count > 0
             ? [NSString stringWithFormat:
-                @"Generate (%lu)",
+                @"  Signature.zh · MrZEfv (%lu)",
                 (unsigned long)count]
-            : @"Generate";
+            : @"  Signature.zh · MrZEfv";
+
+    [button setTitle:title
+            forState:UIControlStateNormal];
+
+    button.accessibilityValue =
+        [NSString stringWithFormat:
+            @"%lu classes selected",
+            (unsigned long)count];
 }
 
 #pragma mark - Table
@@ -238,31 +455,48 @@ typedef NS_ENUM(NSInteger, AVX512DylibType) {
         objc_getClass(className.UTF8String);
 
     Class superClass =
-        cls ? class_getSuperclass(cls) : Nil;
+        cls
+            ? class_getSuperclass(cls)
+            : Nil;
 
-    cell.textLabel.text = className;
+    AVX512ClassInfo *info =
+        [self classInfoForName:className];
+
+    NSUInteger methodCount =
+        info.methods.count;
+
+    cell.textLabel.text =
+        className;
 
     cell.textLabel.font =
-        [UIFont monospacedSystemFontOfSize:14
-                                    weight:UIFontWeightRegular];
+        [UIFont monospacedSystemFontOfSize:
+            14.0
+                                   weight:UIFontWeightMedium];
 
-    if (superClass) {
+    NSString *superName =
+        superClass
+            ? [NSString stringWithUTF8String:
+                class_getName(superClass)]
+            : @"—";
 
-        cell.detailTextLabel.text =
-            [NSString stringWithFormat:
-                @"Superclass: %s",
-                class_getName(superClass)];
+    cell.detailTextLabel.text =
+        [NSString stringWithFormat:
+            @"Superclass: %@  •  %lu method%@",
+            superName,
+            (unsigned long)methodCount,
+            methodCount == 1 ? @"" : @"s"];
 
-    } else {
+    cell.detailTextLabel.numberOfLines =
+        2;
 
-        cell.detailTextLabel.text =
-            @"Superclass: —";
-    }
+    BOOL selected =
+        [self.selectedClasses
+            containsObject:className];
 
     cell.accessoryType =
-        [self.selectedClasses containsObject:className]
+        selected
             ? UITableViewCellAccessoryCheckmark
-            : UITableViewCellAccessoryNone;
+            : UITableViewCellAccessoryDisclosureIndicator;
 
     return cell;
 }
@@ -297,24 +531,24 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         [[UINavigationController alloc]
             initWithRootViewController:controller];
 
-    if (UIDevice.currentDevice.userInterfaceIdiom ==
-        UIUserInterfaceIdiomPad) {
-
-        navigation.modalPresentationStyle =
-            UIModalPresentationPopover;
-
-        navigation.popoverPresentationController.barButtonItem =
-            self.navigationItem.rightBarButtonItem;
-    }
+    navigation.modalPresentationStyle =
+        UIModalPresentationPageSheet;
 
     [self presentViewController:navigation
                        animated:YES
                      completion:nil];
 }
 
+- (void)closeInspector
+{
+    [self dismissViewControllerAnimated:YES
+                             completion:nil];
+}
+
 #pragma mark - Runtime Metadata
 
-- (AVX512ClassInfo *)classInfoForName:(NSString *)className
+- (AVX512ClassInfo *)classInfoForName:
+    (NSString *)className
 {
     Class cls =
         objc_getClass(className.UTF8String);
@@ -326,7 +560,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     AVX512ClassInfo *info =
         [AVX512ClassInfo new];
 
-    info.className = className;
+    info.className =
+        className;
 
     Class superClass =
         class_getSuperclass(cls);
@@ -337,30 +572,28 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
             class_getName(superClass);
 
         if (superName) {
+
             info.superclassName =
-                [NSString stringWithUTF8String:superName];
+                [NSString stringWithUTF8String:
+                    superName];
         }
     }
 
     NSMutableArray<AVX512MethodInfo *> *methods =
         [NSMutableArray array];
 
-    /*
-     Direct methods.
-     class_copyMethodList() reports methods directly
-     implemented by the specified class.
-     */
-
     unsigned int methodCount = 0;
 
     Method *methodList =
-        class_copyMethodList(cls, &methodCount);
+        class_copyMethodList(cls,
+                             &methodCount);
 
     for (unsigned int i = 0;
          i < methodCount;
          i++) {
 
-        Method method = methodList[i];
+        Method method =
+            methodList[i];
 
         if (!method) {
             continue;
@@ -368,7 +601,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
         AVX512MethodInfo *methodInfo =
             [self methodInfoFromMethod:method
-                                direct:YES];
+                                direct:YES
+                       declaringClass:className];
 
         if (methodInfo) {
             [methods addObject:methodInfo];
@@ -376,10 +610,6 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     }
 
     free(methodList);
-
-    /*
-     Walk superclasses so inherited methods are visible.
-     */
 
     Class parent =
         class_getSuperclass(cls);
@@ -389,13 +619,21 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         unsigned int parentCount = 0;
 
         Method *parentMethods =
-            class_copyMethodList(parent, &parentCount);
+            class_copyMethodList(parent,
+                                 &parentCount);
+
+        NSString *parentName =
+            class_getName(parent)
+                ? [NSString stringWithUTF8String:
+                    class_getName(parent)]
+                : @"Unknown";
 
         for (unsigned int i = 0;
              i < parentCount;
              i++) {
 
-            Method method = parentMethods[i];
+            Method method =
+                parentMethods[i];
 
             if (!method) {
                 continue;
@@ -403,7 +641,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
             AVX512MethodInfo *methodInfo =
                 [self methodInfoFromMethod:method
-                                    direct:NO];
+                                    direct:NO
+                           declaringClass:parentName];
 
             if (methodInfo) {
                 [methods addObject:methodInfo];
@@ -416,21 +655,25 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
             class_getSuperclass(parent);
     }
 
-    [methods sortUsingComparator:^NSComparisonResult(
-        AVX512MethodInfo *a,
-        AVX512MethodInfo *b) {
+    [methods sortUsingComparator:
+        ^NSComparisonResult(
+            AVX512MethodInfo *a,
+            AVX512MethodInfo *b) {
 
         return [a.selectorName
             caseInsensitiveCompare:b.selectorName];
     }];
 
-    info.methods = [methods copy];
+    info.methods =
+        [methods copy];
 
     return info;
 }
 
 - (AVX512MethodInfo *)methodInfoFromMethod:(Method)method
                                     direct:(BOOL)direct
+                           declaringClass:
+                               (NSString *)declaringClass
 {
     if (!method) {
         return nil;
@@ -462,21 +705,23 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
             ? [self returnTypeFromEncoding:encoding]
             : @"?";
 
-    info.declaredDirectly = direct;
+    info.declaredDirectly =
+        direct;
+
+    info.declaringClass =
+        declaringClass ?: @"Unknown";
 
     return info;
 }
 
-- (NSString *)returnTypeFromEncoding:(const char *)encoding
+- (NSString *)returnTypeFromEncoding:
+    (const char *)encoding
 {
-    if (!encoding || encoding[0] == '\0') {
+    if (!encoding ||
+        encoding[0] == '\0') {
+
         return @"?";
     }
-
-    /*
-     We intentionally expose the raw Objective-C type encoding.
-     This method only provides a basic human-readable category.
-     */
 
     switch (encoding[0]) {
 
@@ -542,48 +787,101 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         [[UITableViewController alloc]
             initWithStyle:UITableViewStyleInsetGrouped];
 
-    controller.title = info.className;
+    controller.title =
+        info.className;
+
+    controller.tableView.rowHeight =
+        UITableViewAutomaticDimension;
+
+    controller.tableView.estimatedRowHeight =
+        70.0;
+
+    controller.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc]
+            initWithTitle:@"Back"
+                    style:UIBarButtonItemStylePlain
+                   target:self
+                   action:@selector(closeInspector)];
+
+    UIButton *useButton =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+
+    UIImage *signature =
+        [UIImage systemImageNamed:@"signature"];
+
+    if (signature) {
+        [useButton setImage:signature
+                   forState:UIControlStateNormal];
+    }
+
+    [useButton setTitle:@"  Use Class"
+               forState:UIControlStateNormal];
+
+    useButton.titleLabel.font =
+        [UIFont systemFontOfSize:14.0
+                           weight:UIFontWeightSemibold];
+
+    [useButton addTarget:self
+                  action:@selector(selectCurrentInspectorClass:)
+        forControlEvents:UIControlEventTouchUpInside];
+
+    objc_setAssociatedObject(
+        useButton,
+        "AVX512ClassName",
+        info.className,
+        OBJC_ASSOCIATION_COPY_NONATOMIC
+    );
+
+    controller.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc]
+            initWithCustomView:useButton];
 
     NSMutableArray<NSString *> *lines =
         [NSMutableArray array];
 
     [lines addObject:
         [NSString stringWithFormat:
-            @"CLASS\n%@",
+            @"CLASS\n%@\n\n"
+             "The Objective-C runtime class currently being inspected.",
             info.className]];
 
     [lines addObject:
         [NSString stringWithFormat:
-            @"SUPERCLASS\n%@",
+            @"SUPERCLASS\n%@\n\n"
+             "The superclass is the class from which this class "
+             "inherits runtime behavior.",
             info.superclassName ?: @"—"]];
 
     [lines addObject:
         [NSString stringWithFormat:
-            @"METHODS\n%lu",
+            @"METHODS\n%lu\n\n"
+             "This includes methods declared directly by the class "
+             "and methods discovered while walking its superclass chain.",
             (unsigned long)info.methods.count]];
 
     for (AVX512MethodInfo *method in info.methods) {
 
         NSString *origin =
             method.declaredDirectly
-                ? @"declared"
-                : @"inherited";
+                ? @"Declared directly"
+                : @"Inherited";
 
         [lines addObject:
             [NSString stringWithFormat:
-                @"%@\n%@\nencoding: %@\n%@",
+                @"%@\n"
+                 "Return: %@\n"
+                 "Encoding: %@\n"
+                 "%@\n"
+                 "Declared by: %@",
                 method.selectorName,
                 method.returnType,
                 method.typeEncoding,
-                origin]];
+                origin,
+                method.declaringClass]];
     }
 
-    /*
-     The data source is declared in
-     AVX512HookTemplateGenerator.h.
-     */
-
-    __weak typeof(self) weakSelf = self;
+    __weak typeof(self) weakSelf =
+        self;
 
     AVX512InspectorDataSource *source =
         [[AVX512InspectorDataSource alloc]
@@ -591,7 +889,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
             className:info.className
             selectionHandler:^{
 
-        __strong typeof(weakSelf) strongSelf = weakSelf;
+        __strong typeof(weakSelf) strongSelf =
+            weakSelf;
 
         if (!strongSelf) {
             return;
@@ -600,29 +899,19 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         [strongSelf.selectedClasses
             addObject:info.className];
 
-        [strongSelf updateGenerateButton];
+        [strongSelf updateSignatureButton];
+
+        [strongSelf.tableView reloadData];
 
         [controller dismissViewControllerAnimated:YES
                                        completion:nil];
-
-        NSIndexPath *path =
-            [strongSelf indexPathForClass:info.className];
-
-        if (path) {
-
-            [strongSelf.tableView
-                reloadRowsAtIndexPaths:@[path]
-                withRowAnimation:
-                    UITableViewRowAnimationNone];
-        }
     }];
 
-    controller.tableView.dataSource = source;
+    controller.tableView.dataSource =
+        source;
 
-    /*
-     UITableView does not retain its dataSource strongly.
-     Keep it alive for the lifetime of the inspector.
-     */
+    controller.tableView.delegate =
+        source;
 
     objc_setAssociatedObject(
         controller,
@@ -631,20 +920,38 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         OBJC_ASSOCIATION_RETAIN_NONATOMIC
     );
 
-    UIBarButtonItem *select =
-        [[UIBarButtonItem alloc]
-            initWithTitle:@"Use Class"
-            style:UIBarButtonItemStyleDone
-            target:source
-            action:@selector(selectClass)];
-
-    controller.navigationItem.rightBarButtonItem =
-        select;
+    source.presentingController =
+        controller;
 
     return controller;
 }
 
-- (NSIndexPath *)indexPathForClass:(NSString *)className
+- (void)selectCurrentInspectorClass:
+    (UIButton *)sender
+{
+    NSString *className =
+        objc_getAssociatedObject(
+            sender,
+            "AVX512ClassName"
+        );
+
+    if (!className) {
+        return;
+    }
+
+    [self.selectedClasses
+        addObject:className];
+
+    [self updateSignatureButton];
+
+    [self.tableView reloadData];
+
+    [self dismissViewControllerAnimated:YES
+                             completion:nil];
+}
+
+- (NSIndexPath *)indexPathForClass:
+    (NSString *)className
 {
     NSUInteger index =
         [self.filteredClasses
@@ -663,13 +970,38 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
 - (void)generateProject
 {
+    if (self.selectedClasses.count == 0) {
+
+        UIAlertController *alert =
+            [UIAlertController
+                alertControllerWithTitle:
+                    @"Nothing Selected"
+                                 message:
+                    @"Select at least one runtime class before "
+                     "creating the dylib."
+                          preferredStyle:
+                    UIAlertControllerStyleAlert];
+
+        [alert addAction:
+            [UIAlertAction
+                actionWithTitle:@"OK"
+                         style:UIAlertActionStyleDefault
+                       handler:nil]];
+
+        [self presentViewController:alert
+                           animated:YES
+                         completion:nil];
+
+        return;
+    }
+
     UIAlertController *type =
         [UIAlertController
             alertControllerWithTitle:@"Dylib Type"
                              message:
-        @"Choose the generated project type."
+            @"Choose the generated project type."
                       preferredStyle:
-        UIAlertControllerStyleActionSheet];
+            UIAlertControllerStyleActionSheet];
 
     [type addAction:
         [UIAlertAction
@@ -708,15 +1040,16 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                      completion:nil];
 }
 
-- (void)chooseBuildStyle:(AVX512DylibType)dylibType
+- (void)chooseBuildStyle:
+    (AVX512DylibType)dylibType
 {
     UIAlertController *build =
         [UIAlertController
             alertControllerWithTitle:@"Build Project"
                              message:
-        @"Choose how the generated project should build."
+            @"Choose how the generated project should build."
                       preferredStyle:
-        UIAlertControllerStyleActionSheet];
+            UIAlertControllerStyleActionSheet];
 
     [build addAction:
         [UIAlertAction
@@ -759,8 +1092,10 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
 #pragma mark - Project Writer
 
-- (void)writeGeneratedProjectForType:(AVX512DylibType)dylibType
-                          buildStyle:(AVX512BuildStyle)buildStyle
+- (void)writeGeneratedProjectForType:
+            (AVX512DylibType)dylibType
+                          buildStyle:
+            (AVX512BuildStyle)buildStyle
 {
     NSString *root =
         [NSTemporaryDirectory()
@@ -770,7 +1105,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     NSFileManager *fm =
         [NSFileManager defaultManager];
 
-    [fm removeItemAtPath:root error:nil];
+    [fm removeItemAtPath:root
+                   error:nil];
 
     NSError *error = nil;
 
@@ -814,10 +1150,11 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         return;
     }
 
-    if (![implementation writeToFile:implementationPath
-                           atomically:YES
-                             encoding:NSUTF8StringEncoding
-                                error:&error]) {
+    if (![implementation
+            writeToFile:implementationPath
+             atomically:YES
+               encoding:NSUTF8StringEncoding
+                  error:&error]) {
 
         [self showError:error];
         return;
@@ -832,7 +1169,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         return;
     }
 
-    if (buildStyle == AVX512BuildStyleShell) {
+    if (buildStyle ==
+        AVX512BuildStyleShell) {
 
         NSString *script =
             [self generatedBuildScriptForType:dylibType];
@@ -894,6 +1232,7 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 @"//\n"
 "// AVX512Hook.h\n"
 "// Generated by AVX512\n"
+"// Signature.zh · MrZEfv\n"
 "//\n"
 "\n"
 "#import <Foundation/Foundation.h>\n"
@@ -924,6 +1263,7 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 @"//\n"
 "// AVX512Hook.m\n"
 "// Generated by AVX512\n"
+"// Signature.zh · MrZEfv\n"
 "//\n"
 "// Runtime diagnostic/test harness.\n"
 "//\n"
@@ -1003,6 +1343,7 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "\n"
 "+ (void)install\n"
 "{\n"
+"    NSLog(@\"[AVX512] Signature.zh · MrZEfv\");\n"
 "    NSLog(@\"[AVX512] install\");\n"
 "\n"
 "    for (NSString *name in AVX512SelectedClasses()) {\n"
@@ -1043,7 +1384,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "    }\n"
 "}\n";
 
-    if (dylibType == AVX512DylibTypeTestHarness) {
+    if (dylibType ==
+        AVX512DylibTypeTestHarness) {
 
         [s appendString:
 @"\n"
@@ -1065,8 +1407,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
             : @"Runtime Test Harness";
 
     return [NSString stringWithFormat:
-@"#!/bin/sh\n"
-"set -eu\n"
+@"#!/bin/bash\n"
+"set -euo pipefail\n"
 "\n"
 "PROJECT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\n"
 "SDK=\"$(xcrun --sdk iphoneos --show-sdk-path)\"\n"
@@ -1077,51 +1419,48 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "mkdir -p \"$OUT_DIR\" \"$PACKAGE_DIR\"\n"
 "\n"
 "echo \"[AVX512] %@\"\n"
-"echo \"[AVX512] SDK: $SDK\"\n" 
-"echo \"[AVX512] Compiler: $CLANG\"\n"
+"echo \"[AVX512] Signature.zh · MrZEfv\"\n"
+"echo \"[AVX512] SDK: $SDK\"\n"
 "\n"
-"COMMON_FLAGS=\"\\\n"
-"-isysroot $SDK \\\n"
-"-miphoneos-version-min=14.0 \\\n"
-"-dynamiclib \\\n"
-"-fobjc-arc \\\n"
-"-fmodules \\\n"
-"-I$PROJECT_DIR \\\n"
-"-framework Foundation \\\n"
-"-install_name @rpath/AVX512Hook.dylib\"\n"
-"\n"
-"BUILT=\"\"\n"
+"BUILT=()\n"
 "\n"
 "for ARCH in arm64 arm64e; do\n"
 "    echo \"[AVX512] Building $ARCH\"\n"
 "\n"
-"    if \"$CLANG\" -arch \"$ARCH\" $COMMON_FLAGS \\\n"
+"    if \"$CLANG\" \\\n"
+"        -arch \"$ARCH\" \\\n"
+"        -isysroot \"$SDK\" \\\n"
+"        -miphoneos-version-min=14.0 \\\n"
+"        -dynamiclib \\\n"
+"        -fobjc-arc \\\n"
+"        -fmodules \\\n"
+"        -I\"$PROJECT_DIR\" \\\n"
+"        -framework Foundation \\\n"
+"        -install_name \"@rpath/AVX512Hook.dylib\" \\\n"
 "        -o \"$OUT_DIR/AVX512Hook-$ARCH.dylib\" \\\n"
 "        \"$PROJECT_DIR/AVX512Hook.m\"; then\n"
 "\n"
+"        BUILT+=(\"$OUT_DIR/AVX512Hook-$ARCH.dylib\")\n"
 "        echo \"[AVX512] $ARCH OK\"\n"
-"        BUILT=\"$BUILT $OUT_DIR/AVX512Hook-$ARCH.dylib\"\n"
 "    else\n"
 "        echo \"[AVX512] $ARCH failed; continuing\"\n"
 "    fi\n"
 "done\n"
 "\n"
-"set -- $BUILT\n"
-"\n"
-"if [ \"$#\" -eq 0 ]; then\n"
+"if [ \"${#BUILT[@]}\" -eq 0 ]; then\n"
 "    echo \"[AVX512] ERROR: no architecture built\"\n"
 "    exit 1\n"
 "fi\n"
 "\n"
-"if [ \"$#\" -eq 1 ]; then\n"
-"    cp \"$1\" \"$PACKAGE_DIR/AVX512Hook.dylib\"\n"
+"if [ \"${#BUILT[@]}\" -eq 1 ]; then\n"
+"    cp \"${BUILT[0]}\" \"$PACKAGE_DIR/AVX512Hook.dylib\"\n"
 "else\n"
-"    lipo -create \"$@\" \\\n"
+"    lipo -create \"${BUILT[@]}\" \\\n"
 "        -output \"$PACKAGE_DIR/AVX512Hook.dylib\"\n"
 "fi\n"
 "\n"
 "if command -v ldid >/dev/null 2>&1; then\n"
-"    echo \"[AVX512] ldid detected\"\n"
+"    echo \"[AVX512] Signing with ldid\"\n"
 "    ldid -S \"$PACKAGE_DIR/AVX512Hook.dylib\"\n"
 "else\n"
 "    echo \"[AVX512] ldid not found; dylib remains unsigned\"\n"
@@ -1129,8 +1468,6 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "\n"
 "echo\n"
 "echo \"[AVX512] Build complete\"\n"
-"echo \"[AVX512] Output: $PACKAGE_DIR/AVX512Hook.dylib\"\n"
-"\n"
 "file \"$PACKAGE_DIR/AVX512Hook.dylib\"\n"
 "lipo -info \"$PACKAGE_DIR/AVX512Hook.dylib\" || true\n",
         description];
@@ -1167,7 +1504,6 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "        run: |\n"
 "          xcodebuild -version\n"
 "          xcrun --sdk iphoneos --show-sdk-path\n"
-"          xcrun --sdk iphoneos -f clang\n"
 "\n"
 "      - name: Install ldid\n"
 "        run: brew install ldid\n"
@@ -1182,28 +1518,26 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "\n"
 "          mkdir -p build_slices packages\n"
 "\n"
-"          COMMON_FLAGS=(\n"
-"            -isysroot \"$SDK\"\n"
-"            -miphoneos-version-min=14.0\n"
-"            -dynamiclib\n"
-"            -fobjc-arc\n"
-"            -fmodules\n"
-"            -framework Foundation\n"
-"            -install_name \"@rpath/AVX512Hook.dylib\"\n"
-"          )\n"
-"\n"
 "          BUILT=()\n"
 "\n"
 "          for ARCH in arm64 arm64e; do\n"
 "            echo \"=== Building $ARCH ===\"\n"
 "\n"
-"            if \"$CLANG\" -arch \"$ARCH\" \"${COMMON_FLAGS[@]}\" \\\n"
-"                 -I. \\\n"
-"                 -o \"build_slices/AVX512Hook-$ARCH.dylib\" \\\n"
-"                 AVX512Hook.m; then\n"
+"            if \"$CLANG\" \\\n"
+"              -arch \"$ARCH\" \\\n"
+"              -isysroot \"$SDK\" \\\n"
+"              -miphoneos-version-min=14.0 \\\n"
+"              -dynamiclib \\\n"
+"              -fobjc-arc \\\n"
+"              -fmodules \\\n"
+"              -I. \\\n"
+"              -framework Foundation \\\n"
+"              -install_name \"@rpath/AVX512Hook.dylib\" \\\n"
+"              -o \"build_slices/AVX512Hook-$ARCH.dylib\" \\\n"
+"              AVX512Hook.m; then\n"
 "\n"
-"              echo \"$ARCH OK\"\n"
 "              BUILT+=(\"build_slices/AVX512Hook-$ARCH.dylib\")\n"
+"              echo \"$ARCH OK\"\n"
 "            else\n"
 "              echo \"::warning::$ARCH failed to link — continuing\"\n"
 "            fi\n"
@@ -1221,10 +1555,9 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "              -output packages/AVX512Hook.dylib\n"
 "          fi\n"
 "\n"
-"          echo \"[AVX512] Signing with ldid\"\n"
+"          echo \"[AVX512] Signature.zh · MrZEfv\"\n"
 "          ldid -S packages/AVX512Hook.dylib\n"
 "\n"
-"          echo \"[AVX512] Result\"\n"
 "          file packages/AVX512Hook.dylib\n"
 "          lipo -info packages/AVX512Hook.dylib || true\n"
 "          ls -lh packages/AVX512Hook.dylib\n"
@@ -1251,8 +1584,10 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
 #pragma mark - README
 
-- (NSString *)generatedREADMEForType:(AVX512DylibType)dylibType
-                          buildStyle:(AVX512BuildStyle)buildStyle
+- (NSString *)generatedREADMEForType:
+            (AVX512DylibType)dylibType
+                          buildStyle:
+            (AVX512BuildStyle)buildStyle
 {
     NSMutableString *readme =
         [NSMutableString string];
@@ -1269,19 +1604,21 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
     [readme appendFormat:
 @"# AVX512 Generated Dylib\n\n"
-"Generated by AVX512.\n\n"
+"**Signature.zh · MrZEfv**\n\n"
+"Generated by the AVX512 Runtime Explorer.\n\n"
 "## Project type\n\n"
 "%@\n\n"
 "## Build mode\n\n"
 "%@\n\n"
 "## Files\n\n"
 "- `AVX512Hook.h` — public interface\n"
-"- `AVX512Hook.m` — generated runtime implementation\n"
+"- `AVX512Hook.m` — runtime diagnostic implementation\n"
 "- `README.md` — project documentation\n",
         type,
         build];
 
-    if (buildStyle == AVX512BuildStyleShell) {
+    if (buildStyle ==
+        AVX512BuildStyleShell) {
 
         [readme appendString:
 @"- `build.sh` — iPhoneOS arm64/arm64e build script\n\n"
@@ -1290,44 +1627,47 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 "chmod +x build.sh\n"
 "./build.sh\n"
 "```\n\n"
-"The resulting dylib is written to `packages/AVX512Hook.dylib`.\n\n"];
+"The resulting dylib is written to "
+"`packages/AVX512Hook.dylib`.\n\n"];
 
     } else {
 
         [readme appendString:
 @"- `.github/workflows/build.yml` — GitHub Actions workflow\n\n"
 "## Build\n\n"
-"Push the project to GitHub and run the workflow manually, or push to `main`.\n\n"
-"The workflow builds arm64 and arm64e slices, combines them with `lipo`, "
-"applies `ldid`, and uploads the resulting dylib as an artifact.\n\n"];
+"Push the project to GitHub and run the workflow manually, "
+"or push to `main`.\n\n"
+"The workflow builds arm64 and arm64e slices, combines them "
+"with `lipo`, applies `ldid`, and uploads the resulting dylib.\n\n"];
     }
 
     [readme appendString:
 @"## Runtime information\n\n"
-"The generator inspected the Objective-C runtime when this project was created.\n\n"
-"The selected class names are embedded in the generated implementation.\n"
-"At load time the generated diagnostic code resolves those classes and prints "
-"their direct instance methods and Objective-C type encodings.\n\n"
+"The generator inspected Objective-C runtime metadata when "
+"this project was created.\n\n"
+"The selected class names are embedded in the generated "
+"implementation. At load time the diagnostic code resolves "
+"those classes and prints their direct instance methods and "
+"Objective-C type encodings.\n\n"
 "## ABI note\n\n"
-"Objective-C selectors may use arbitrary argument and return types. "
-"This generator does not invent a universal function signature for an arbitrary "
-"selector. The raw Objective-C type encoding is exposed so a developer working "
-"on a controlled test target can determine the appropriate signature before "
+"Objective-C selectors may use arbitrary argument and return "
+"types. This generator does not invent a universal function "
+"signature for an arbitrary selector. The raw Objective-C type "
+"encoding is exposed so a developer working on a controlled "
+"test target can determine the appropriate signature before "
 "implementing behavior.\n\n"
-"## Signing\n\n"
-"The GitHub workflow installs `ldid` and signs the generated dylib. "
-"The local shell build uses `ldid` when it is available and otherwise leaves "
-"the dylib unsigned.\n\n"
 "## Scope\n\n"
-"This generated project is intended for runtime diagnostics and controlled "
-"test targets. It does not automatically alter arbitrary method behavior.\n"];
+"This generated project is intended for runtime diagnostics "
+"and controlled test targets. It does not automatically alter "
+"arbitrary method behavior.\n"];
 
     return readme;
 }
 
 #pragma mark - Sharing
 
-- (void)shareGeneratedProject:(NSString *)root
+- (void)shareGeneratedProject:
+    (NSString *)root
 {
     NSFileManager *fm =
         [NSFileManager defaultManager];
@@ -1350,12 +1690,13 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
     if (items.count == 0) {
 
         [self showError:
-            [NSError errorWithDomain:@"AVX512"
-                                 code:1
-                             userInfo:@{
-            NSLocalizedDescriptionKey:
-                @"No generated project files were found."
-        }]];
+            [NSError
+                errorWithDomain:@"AVX512"
+                           code:1
+                       userInfo:@{
+                NSLocalizedDescriptionKey:
+                    @"No generated project files were found."
+            }]];
 
         return;
     }
@@ -1376,7 +1717,8 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
                      completion:nil];
 }
 
-- (NSArray<NSString *> *)filesRecursivelyAtPath:(NSString *)root
+- (NSArray<NSString *> *)filesRecursivelyAtPath:
+    (NSString *)root
 {
     NSFileManager *fm =
         [NSFileManager defaultManager];
@@ -1408,20 +1750,24 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 
 #pragma mark - Helpers
 
-- (NSString *)escapedString:(NSString *)string
+- (NSString *)escapedString:
+    (NSString *)string
 {
     NSString *result =
-        [string stringByReplacingOccurrencesOfString:@"\\"
-                                           withString:@"\\\\"];
+        [string
+            stringByReplacingOccurrencesOfString:@"\\"
+                                      withString:@"\\\\"];
 
     result =
-        [result stringByReplacingOccurrencesOfString:@"\""
-                                           withString:@"\\\""];
+        [result
+            stringByReplacingOccurrencesOfString:@"\""
+                                      withString:@"\\\""];
 
     return result;
 }
 
-- (void)showError:(NSError *)error
+- (void)showError:
+    (NSError *)error
 {
     UIAlertController *alert =
         [UIAlertController
@@ -1446,31 +1792,33 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 #pragma mark - Inspector Data Source
 
 /*
- IMPORTANT:
+ AVX512InspectorDataSource is declared in:
 
- AVX512InspectorDataSource is already declared publicly in
- AVX512HookTemplateGenerator.h.
+ AVX512HookTemplateGenerator.h
 
- Therefore we DO NOT redeclare the class interface here.
+ There is intentionally NO:
 
- This class extension only adds implementation-private
- properties.
- */
+ AVX512InspectorDataSource.h
+*/
 
 @interface AVX512InspectorDataSource ()
 
 @property (nonatomic, strong) NSArray<NSString *> *lines;
 @property (nonatomic, copy) NSString *className;
 @property (nonatomic, copy) void (^selectionHandler)(void);
+@property (nonatomic, weak) UIViewController *presentingController;
 
 @end
 
 
 @implementation AVX512InspectorDataSource
 
-- (instancetype)initWithLines:(NSArray<NSString *> *)lines
-                     className:(NSString *)className
-             selectionHandler:(void (^)(void))handler
+- (instancetype)initWithLines:
+                    (NSArray<NSString *> *)lines
+                     className:
+                    (NSString *)className
+              selectionHandler:
+                    (void (^)(void))handler
 {
     self = [super init];
 
@@ -1496,18 +1844,22 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView
-         cellForRowAtIndexPath:(NSIndexPath *)indexPath
+         cellForRowAtIndexPath:
+            (NSIndexPath *)indexPath
 {
     UITableViewCell *cell =
-        [tableView dequeueReusableCellWithIdentifier:
-            @"InspectorCell"];
+        [tableView
+            dequeueReusableCellWithIdentifier:
+                @"InspectorCell"];
 
     if (!cell) {
 
         cell =
             [[UITableViewCell alloc]
-                initWithStyle:UITableViewCellStyleSubtitle
-                reuseIdentifier:@"InspectorCell"];
+                initWithStyle:
+                    UITableViewCellStyleSubtitle
+                reuseIdentifier:
+                    @"InspectorCell"];
     }
 
     NSString *text =
@@ -1520,10 +1872,225 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath
         0;
 
     cell.textLabel.font =
-        [UIFont monospacedSystemFontOfSize:12
-                                    weight:UIFontWeightRegular];
+        [UIFont monospacedSystemFontOfSize:
+            12.0
+                                   weight:UIFontWeightRegular];
 
     return cell;
+}
+
+#pragma mark - Method Selection
+
+- (void)tableView:(UITableView *)tableView
+didSelectRowAtIndexPath:
+    (NSIndexPath *)indexPath
+{
+    /*
+     The first three rows are class metadata.
+     Method rows begin after those entries.
+     */
+
+    if (indexPath.row < 3) {
+
+        [tableView deselectRowAtIndexPath:indexPath
+                                 animated:YES];
+
+        return;
+    }
+
+    NSUInteger methodIndex =
+        indexPath.row - 3;
+
+    /*
+     The generator's lines contain formatted method
+     descriptions. For the detailed screen we recover
+     the method metadata by asking the runtime again.
+     */
+
+    Class cls =
+        objc_getClass(self.className.UTF8String);
+
+    if (!cls) {
+        return;
+    }
+
+    NSMutableArray<AVX512MethodInfo *> *methods =
+        [NSMutableArray array];
+
+    Class current =
+        cls;
+
+    while (current) {
+
+        unsigned int count = 0;
+
+        Method *methodList =
+            class_copyMethodList(current, &count);
+
+        NSString *declaringClass =
+            class_getName(current)
+                ? [NSString stringWithUTF8String:
+                    class_getName(current)]
+                : @"Unknown";
+
+        for (unsigned int i = 0;
+             i < count;
+             i++) {
+
+            Method method =
+                methodList[i];
+
+            if (!method) {
+                continue;
+            }
+
+            SEL selector =
+                method_getName(method);
+
+            const char *encoding =
+                method_getTypeEncoding(method);
+
+            AVX512MethodInfo *info =
+                [AVX512MethodInfo new];
+
+            info.selectorName =
+                NSStringFromSelector(selector);
+
+            info.typeEncoding =
+                encoding
+                    ? [NSString stringWithUTF8String:
+                        encoding]
+                    : @"";
+
+            info.returnType =
+                encoding
+                    ? [self returnTypeFromEncoding:
+                        encoding]
+                    : @"?";
+
+            info.declaredDirectly =
+                current == cls;
+
+            info.declaringClass =
+                declaringClass;
+
+            [methods addObject:info];
+        }
+
+        free(methodList);
+
+        current =
+            class_getSuperclass(current);
+    }
+
+    [methods sortUsingComparator:
+        ^NSComparisonResult(
+            AVX512MethodInfo *a,
+            AVX512MethodInfo *b) {
+
+        return [a.selectorName
+            caseInsensitiveCompare:b.selectorName];
+    }];
+
+    if (methodIndex >= methods.count) {
+        [tableView deselectRowAtIndexPath:indexPath
+                                 animated:YES];
+        return;
+    }
+
+    AVX512MethodInfo *method =
+        methods[methodIndex];
+
+    AVX512MethodDetailViewController *detail =
+        [[AVX512MethodDetailViewController alloc]
+            initWithMethod:method
+                  className:self.className];
+
+    UINavigationController *navigation =
+        (UINavigationController *)
+            self.presentingController.navigationController;
+
+    if (navigation) {
+
+        [navigation pushViewController:detail
+                              animated:YES];
+
+    } else {
+
+        [self.presentingController
+            presentViewController:detail
+                           animated:YES
+                         completion:nil];
+    }
+
+    [tableView deselectRowAtIndexPath:indexPath
+                             animated:YES];
+}
+
+#pragma mark - Type Decoder
+
+- (NSString *)returnTypeFromEncoding:
+    (const char *)encoding
+{
+    if (!encoding ||
+        encoding[0] == '\0') {
+
+        return @"?";
+    }
+
+    switch (encoding[0]) {
+
+        case 'v':
+            return @"void";
+
+        case '@':
+            return @"object";
+
+        case 'B':
+            return @"BOOL";
+
+        case 'c':
+            return @"char";
+
+        case 'i':
+            return @"int";
+
+        case 's':
+            return @"short";
+
+        case 'l':
+            return @"long";
+
+        case 'q':
+            return @"long long";
+
+        case 'f':
+            return @"float";
+
+        case 'd':
+            return @"double";
+
+        case ':':
+            return @"SEL";
+
+        case '#':
+            return @"Class";
+
+        case '^':
+            return @"pointer";
+
+        case '{':
+            return @"struct";
+
+        case '[':
+            return @"array";
+
+        case 'b':
+            return @"bitfield";
+
+        default:
+            return @"encoded";
+    }
 }
 
 - (void)selectClass
