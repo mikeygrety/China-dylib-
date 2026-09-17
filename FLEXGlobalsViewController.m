@@ -26,7 +26,7 @@
 #import "UIBarButtonItem+FLEX.h"
 
 // MRzefv
-#import "MRzefvUIEditor.h"
+#import "x/mrzefv/MRzefvUIEditor.h"
 
 @interface AVX512GlobalsViewController ()
 
