@@ -23,15 +23,9 @@ jobs:
     runs-on: macos-15
 
     steps:
-      # ---------------------------------------------------------
-      # Checkout
-      # ---------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # Xcode / SDK information
-      # ---------------------------------------------------------
       - name: Show toolchain
         run: |
           set -euo pipefail
@@ -46,23 +40,14 @@ jobs:
           echo "Clang:"
           xcrun --sdk iphoneos -f clang
 
-      # ---------------------------------------------------------
-      # Install ldid
-      # ---------------------------------------------------------
       - name: Install ldid
         run: |
           set -euo pipefail
 
           brew install ldid
-
-          echo
           ldid --version || true
 
-      # ---------------------------------------------------------
-      # Locate Objective-C / C / C++ source
-      # ---------------------------------------------------------
       - name: Locate source files
-        id: source
         run: |
           set -euo pipefail
 
@@ -78,28 +63,24 @@ jobs:
             -not -path './__MACOSX/*' \
             | sort
 
-          COUNT="$(
+          COUNT=$(
             find . \
               \( -name '*.m' -o -name '*.mm' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
               -not -path './.git/*' \
               -not -path './__MACOSX/*' \
-              | wc -l \
-              | tr -d ' '
-          )"
+              | wc -l
+          )
+
+          COUNT=$(echo "$COUNT" | tr -d ' ')
 
           echo
           echo "Found $COUNT source files."
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "::error::No source files found."
+            echo "::error::No Objective-C/C source files found."
             exit 1
           fi
 
-          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-
-      # ---------------------------------------------------------
-      # Build arm64 + arm64e
-      # ---------------------------------------------------------
       - name: Build dylib
         env:
           OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
@@ -115,46 +96,50 @@ jobs:
           echo "SDK: $SDK"
           echo "Clang: $CLANG"
 
-          # -----------------------------------------------------
-          # Collect sources
-          # -----------------------------------------------------
+          # ---------------------------------------------------
+          # Build a newline-separated source list.
+          #
+          # Do NOT use mapfile/readarray because the macOS
+          # system Bash does not provide it.
+          # ---------------------------------------------------
 
-          mapfile -t SOURCES < <(
-            find . \
-              \( -name '*.m' -o -name '*.mm' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
-              -not -path './.git/*' \
-              -not -path './__MACOSX/*' \
-              | sort
-          )
+          SOURCE_LIST="build_sources.txt"
 
-          if [ "${#SOURCES[@]}" -eq 0 ]; then
+          find . \
+            \( -name '*.m' -o -name '*.mm' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' \) \
+            -not -path './.git/*' \
+            -not -path './__MACOSX/*' \
+            -not -path './packages/*' \
+            -not -path './build_slices/*' \
+            | sort > "$SOURCE_LIST"
+
+          if [ ! -s "$SOURCE_LIST" ]; then
             echo "::error::No source files found."
             exit 1
           fi
 
           echo
           echo "Compiling:"
-          printf '  %s\n' "${SOURCES[@]}"
+          cat "$SOURCE_LIST"
 
-          # -----------------------------------------------------
+          # ---------------------------------------------------
           # Include paths
-          # -----------------------------------------------------
+          # ---------------------------------------------------
 
-          INCLUDE_FLAGS=(
+          INCLUDE_FLAGS="
             -I.
             -I./x
             -I./x/capstone
             -I./x/capstone/include
-          )
+          "
 
-          # -----------------------------------------------------
+          # ---------------------------------------------------
           # Common compiler flags
-          # -----------------------------------------------------
+          # ---------------------------------------------------
 
-          COMMON_FLAGS=(
-            -isysroot "$SDK"
+          COMMON_FLAGS="
+            -isysroot $SDK
             -miphoneos-version-min=14.0
-
             -dynamiclib
             -fobjc-arc
 
@@ -163,7 +148,7 @@ jobs:
             -DCAPSTONE_HAS_AARCH64
             -DCAPSTONE_USE_SYS_DYN_MEM
 
-            "${INCLUDE_FLAGS[@]}"
+            $INCLUDE_FLAGS
 
             -framework Foundation
             -framework UIKit
@@ -184,116 +169,126 @@ jobs:
 
             -Wl,-segalign,4000
 
-            -install_name "@rpath/${OUT_NAME}.dylib"
+            -install_name @rpath/${OUT_NAME}.dylib
 
             -w
-          )
+          "
 
-          BUILT=()
+          # ---------------------------------------------------
+          # Convert source list into shell arguments safely.
+          #
+          # Since the project paths are normal repository paths,
+          # this is sufficient for the generated build.
+          # ---------------------------------------------------
 
-          # -----------------------------------------------------
+          SOURCES=""
+
+          while IFS= read -r SOURCE; do
+            SOURCES="$SOURCES \"$SOURCE\""
+          done < "$SOURCE_LIST"
+
+          BUILT=""
+
+          # ---------------------------------------------------
           # arm64
-          # -----------------------------------------------------
+          # ---------------------------------------------------
 
           echo
           echo "========================================"
           echo "Building arm64"
           echo "========================================"
 
-          if "$CLANG" \
-            -arch arm64 \
-            "${COMMON_FLAGS[@]}" \
-            -o "build_slices/${OUT_NAME}-arm64.dylib" \
-            "${SOURCES[@]}"
-          then
+          if eval "\"$CLANG\" -arch arm64 $COMMON_FLAGS -o \"build_slices/${OUT_NAME}-arm64.dylib\" $SOURCES"; then
             echo "arm64 build succeeded."
-            BUILT+=("build_slices/${OUT_NAME}-arm64.dylib")
+            BUILT="$BUILT build_slices/${OUT_NAME}-arm64.dylib"
           else
             echo "::warning::arm64 build failed."
           fi
 
-          # -----------------------------------------------------
+          # ---------------------------------------------------
           # arm64e
-          # -----------------------------------------------------
+          # ---------------------------------------------------
 
           echo
           echo "========================================"
           echo "Building arm64e"
           echo "========================================"
 
-          if "$CLANG" \
-            -arch arm64e \
-            "${COMMON_FLAGS[@]}" \
-            -o "build_slices/${OUT_NAME}-arm64e.dylib" \
-            "${SOURCES[@]}"
-          then
+          if eval "\"$CLANG\" -arch arm64e $COMMON_FLAGS -o \"build_slices/${OUT_NAME}-arm64e.dylib\" $SOURCES"; then
             echo "arm64e build succeeded."
-            BUILT+=("build_slices/${OUT_NAME}-arm64e.dylib")
+            BUILT="$BUILT build_slices/${OUT_NAME}-arm64e.dylib"
           else
             echo "::warning::arm64e build failed."
           fi
 
-          # -----------------------------------------------------
-          # Verify something actually built
-          # -----------------------------------------------------
+          # ---------------------------------------------------
+          # Verify build
+          # ---------------------------------------------------
 
-          if [ "${#BUILT[@]}" -eq 0 ]; then
-            echo "::error::No architectures built successfully."
+          if [ -z "$BUILT" ]; then
+            echo "::error::No architecture built successfully."
             exit 1
           fi
 
-          # -----------------------------------------------------
-          # Universal dylib
-          # -----------------------------------------------------
+          # ---------------------------------------------------
+          # Create universal dylib
+          # ---------------------------------------------------
 
           echo
           echo "========================================"
           echo "Creating universal dylib"
           echo "========================================"
 
-          if [ "${#BUILT[@]}" -eq 1 ]; then
-            cp "${BUILT[0]}" "packages/${OUT_NAME}.dylib"
+          BUILT_COUNT=$(echo "$BUILT" | wc -w | tr -d ' ')
+
+          if [ "$BUILT_COUNT" -eq 1 ]; then
+            FIRST=$(echo "$BUILT" | awk '{print $1}')
+            cp "$FIRST" "packages/${OUT_NAME}.dylib"
           else
             lipo \
               -create \
-              "${BUILT[@]}" \
+              $BUILT \
               -output "packages/${OUT_NAME}.dylib"
           fi
 
-          # -----------------------------------------------------
-          # Ad-hoc sign
-          # -----------------------------------------------------
+          # ---------------------------------------------------
+          # Sign
+          # ---------------------------------------------------
 
           echo
-          echo "Signing dylib..."
+          echo "Signing universal dylib..."
 
           ldid -S "packages/${OUT_NAME}.dylib"
 
-          for dylib in build_slices/*.dylib; do
-            ldid -S "$dylib" || true
+          for DYLIB in build_slices/*.dylib; do
+            [ -f "$DYLIB" ] || continue
+            ldid -S "$DYLIB" || true
           done
 
-          # -----------------------------------------------------
-          # Inspect output
-          # -----------------------------------------------------
+          # ---------------------------------------------------
+          # Inspect
+          # ---------------------------------------------------
 
           echo
           echo "========================================"
-          echo "Build results"
+          echo "BUILD RESULT"
           echo "========================================"
 
           file "packages/${OUT_NAME}.dylib"
 
           echo
-          lipo -info "packages/${OUT_NAME}.dylib" || true
+          echo "Architectures:"
+          lipo -info "packages/${OUT_NAME}.dylib"
 
           echo
+          echo "Linked frameworks:"
+          otool -L "packages/${OUT_NAME}.dylib" || true
+
+          echo
+          echo "Files:"
           ls -lh packages/
           ls -lh build_slices/
 
-      # ---------------------------------------------------------
-      # Verify Mach-O architectures
-      # ---------------------------------------------------------
       - name: Verify universal dylib
         env:
           OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
@@ -302,61 +297,58 @@ jobs:
 
           DYLIB="packages/${OUT_NAME}.dylib"
 
-          test -f "$DYLIB"
+          if [ ! -f "$DYLIB" ]; then
+            echo "::error::Universal dylib was not created."
+            exit 1
+          fi
 
-          echo "File:"
+          echo "Checking $DYLIB"
+
           file "$DYLIB"
 
           echo
-          echo "Architectures:"
           lipo -info "$DYLIB"
 
           echo
-          echo "Load commands:"
-          otool -L "$DYLIB" || true
+          echo "Mach-O header:"
+          otool -hv "$DYLIB" || true
 
-      # ---------------------------------------------------------
-      # Generate build manifest
-      # ---------------------------------------------------------
-      - name: Generate build manifest
+      - name: Generate build info
         env:
           OUT_NAME: ${{ github.event.inputs.out_name || 'AVX512' }}
         run: |
           set -euo pipefail
 
-          cat > packages/build-info.txt <<EOF
-          AVX512 Dylib Build
-          ==================
-
-          Name: ${OUT_NAME}.dylib
-
-          Commit:
-          ${GITHUB_SHA}
-
-          Branch:
-          ${GITHUB_REF_NAME}
-
-          Runner:
-          ${RUNNER_OS}
-
-          Xcode:
-          $(xcodebuild -version | tr '\n' ' ')
-
-          SDK:
-          $(xcrun --sdk iphoneos --show-sdk-path)
-
-          Architectures:
-          $(lipo -info "packages/${OUT_NAME}.dylib" 2>&1)
-
-          File:
-          $(file "packages/${OUT_NAME}.dylib")
-          EOF
+          {
+            echo "AVX512 Dylib Build"
+            echo "=================="
+            echo
+            echo "Name: ${OUT_NAME}.dylib"
+            echo
+            echo "Commit:"
+            echo "$GITHUB_SHA"
+            echo
+            echo "Branch:"
+            echo "$GITHUB_REF_NAME"
+            echo
+            echo "Runner:"
+            echo "$RUNNER_OS"
+            echo
+            echo "Xcode:"
+            xcodebuild -version
+            echo
+            echo "SDK:"
+            xcrun --sdk iphoneos --show-sdk-path
+            echo
+            echo "Architectures:"
+            lipo -info "packages/${OUT_NAME}.dylib"
+            echo
+            echo "File:"
+            file "packages/${OUT_NAME}.dylib"
+          } > packages/build-info.txt
 
           cat packages/build-info.txt
 
-      # ---------------------------------------------------------
-      # Upload universal dylib
-      # ---------------------------------------------------------
       - name: Upload universal dylib
         uses: actions/upload-artifact@v4
         with:
@@ -365,9 +357,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ---------------------------------------------------------
-      # Upload individual architecture slices
-      # ---------------------------------------------------------
       - name: Upload architecture slices
         uses: actions/upload-artifact@v4
         with:
@@ -376,9 +365,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ---------------------------------------------------------
-      # Upload build information
-      # ---------------------------------------------------------
       - name: Upload build info
         uses: actions/upload-artifact@v4
         with:
@@ -387,9 +373,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ---------------------------------------------------------
-      # Package source
-      # ---------------------------------------------------------
       - name: Package source
         if: ${{ github.event.inputs.build_source_zip != 'false' }}
         env:
@@ -407,9 +390,6 @@ jobs:
 
           ls -lh "packages/${OUT_NAME}-source.zip"
 
-      # ---------------------------------------------------------
-      # Upload source
-      # ---------------------------------------------------------
       - name: Upload source ZIP
         if: ${{ github.event.inputs.build_source_zip != 'false' }}
         uses: actions/upload-artifact@v4
