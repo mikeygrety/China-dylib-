@@ -1,15 +1,16 @@
 //
 //  MRzefvUIEditor.h
-//  AVX512HookTemplateGenerator
+//  AVX512
 //
-//  MRzefv UI Editor by DELvEK.NET
+//  MRzefv UI Editor
+//  AVX512 by DELvEK.NET
 //
 
 #import <UIKit/UIKit.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-typedef NS_ENUM(NSInteger, MRzefvUIChangeType) {
+typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
     MRzefvUIChangeTypeText = 0,
     MRzefvUIChangeTypeHidden,
     MRzefvUIChangeTypeAlignment,
@@ -19,51 +20,44 @@ typedef NS_ENUM(NSInteger, MRzefvUIChangeType) {
 
 @interface MRzefvUIChange : NSObject
 
-@property (nonatomic, assign) MRzefvUIChangeType type;
+@property (nonatomic) MRzefvUIChangeType type;
 
-@property (nonatomic, copy) NSString *targetClass;
-@property (nonatomic, copy) NSString *hierarchyPath;
-
+@property (nonatomic, copy, nullable) NSString *targetClass;
+@property (nonatomic, copy, nullable) NSString *hierarchyPath;
 @property (nonatomic, copy, nullable) NSString *propertyName;
 
 @property (nonatomic, copy, nullable) NSString *originalValue;
-@property (nonatomic, copy, nullable) NSString *newValue;
+@property (nonatomic, copy, nullable) NSString *replacementValue;
 
-@property (nonatomic, assign) CGRect frame;
-@property (nonatomic, assign) NSTextAlignment alignment;
+@property (nonatomic) CGRect frame;
+@property (nonatomic) NSTextAlignment alignment;
 
 @end
 
 @interface MRzefvUIProfile : NSObject
 
 @property (nonatomic, copy) NSString *format;
-@property (nonatomic, assign) NSInteger version;
+@property (nonatomic) NSUInteger version;
 
-@property (nonatomic, strong) NSMutableArray<MRzefvUIChange *> *changes;
+@property (nonatomic, copy) NSArray<MRzefvUIChange *> *changes;
 
 - (void)addChange:(MRzefvUIChange *)change;
 - (void)removeChange:(MRzefvUIChange *)change;
 - (void)removeAllChanges;
 
 - (NSDictionary *)dictionaryRepresentation;
-- (NSData *)JSONData:(NSError **)error;
+- (nullable NSData *)JSONData;
 
 @end
 
 @interface MRzefvUIEditorController : UITableViewController
 
-@property (nonatomic, strong) MRzefvUIProfile *profile;
+@property (nonatomic, strong, readonly) MRzefvUIProfile *profile;
 
-/// The view currently being inspected/edited.
 @property (nonatomic, weak, nullable) UIView *selectedView;
 
-/// Begins a temporary live-preview session.
 - (void)beginPreview;
-
-/// Reverts all temporary preview changes.
 - (void)resetPreview;
-
-/// Saves the current changes into the UI profile.
 - (void)saveCurrentProfile;
 
 @end
