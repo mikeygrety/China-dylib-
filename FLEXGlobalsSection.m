@@ -11,21 +11,25 @@
 #import "UIFont+FLEX.h"
 
 @interface AVX512GlobalsSection ()
-/// Filtered rows
+
+/// Filtered rows.
 @property (nonatomic) NSArray<AVX512GlobalsEntry *> *rows;
-/// Unfiltered rows
+
+/// Unfiltered rows.
 @property (nonatomic) NSArray<AVX512GlobalsEntry *> *allRows;
+
 @end
+
 @implementation AVX512GlobalsSection
 
 #pragma mark - Initialization
 
 + (instancetype)title:(NSString *)title rows:(NSArray<AVX512GlobalsEntry *> *)rows {
-    AVX512GlobalsSection *s = [self new];
-    s->_title = title;
-    s.allRows = rows;
+    AVX512GlobalsSection *section = [self new];
+    section->_title = title;
+    section.allRows = rows;
 
-    return s;
+    return section;
 }
 
 - (void)setAllRows:(NSArray<AVX512GlobalsEntry *> *)allRows {
@@ -46,10 +50,11 @@
 
 - (void)reloadData {
     NSString *filterText = self.filterText;
-    
+
     if (filterText.length) {
         self.rows = [self.allRows avx512_filtered:^BOOL(AVX512GlobalsEntry *entry, NSUInteger idx) {
-            return [entry.entryNameFuture() localizedCaseInsensitiveContainsString:filterText];
+            NSString *name = entry.entryNameFuture ? entry.entryNameFuture() : @"";
+            return [name localizedCaseInsensitiveContainsString:filterText];
         }];
     } else {
         self.rows = self.allRows;
@@ -65,29 +70,58 @@
 }
 
 - (UIViewController *)viewControllerToPushForRow:(NSInteger)row {
-    return self.rows[row].viewControllerFuture ? self.rows[row].viewControllerFuture() : nil;
+    AVX512GlobalsEntry *entry = self.rows[row];
+
+    if (entry.viewControllerFuture) {
+        return entry.viewControllerFuture();
+    }
+
+    return nil;
 }
 
 - (void)configureCell:(__kindof UITableViewCell *)cell forRow:(NSInteger)row {
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     cell.textLabel.font = UIFont.avx512_defaultTableCellFont;
-    NSString *title = self.rows[row].entryNameFuture();
+
+    AVX512GlobalsEntry *entry = self.rows[row];
+    NSString *title = entry.entryNameFuture ? entry.entryNameFuture() : @"";
+
     cell.textLabel.text = title;
 
-    // Unique SF Symbol per globals entry (replaces the old hard-coded emoji).
-    // Keyed off the clean title so no entry-class changes are needed.
+    //
+    // One SF Symbol per globals entry.
+    //
+    // The symbols are keyed by the displayed title so the existing
+    // AVX512GlobalsEntry implementations do not need to change.
+    //
     static NSDictionary<NSString *, NSString *> *symbols = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
+    static dispatch_once_t onceToken;
+
+    dispatch_once(&onceToken, ^{
         symbols = @{
+            // Process & Events
+            @"Network History":              @"antenna.radiowaves.left.and.right",
+            @"System Log":                   @"doc.text.magnifyingglass",
+            @"Process Info":                 @"cpu",
+            @"Live Objects":                 @"cube.transparent",
+            @"Address Explorer":             @"magnifyingglass",
+            @"Runtime Browser":              @"books.vertical",
+
+            // App Shortcuts
             @"App Delegate":                 @"app.badge",
             @"Key Window":                   @"macwindow",
             @"Root View Controller":         @"rectangle.stack",
-            @"Process Info":                 @"cpu",
             @"NSUserDefaults":               @"externaldrive",
             @"Main Bundle":                  @"shippingbox",
             @"UIApplication.shared":         @"app.dashed",
-            @"UIScreen.main":                @"display",
+            @"Browse Bundle":                @"folder",
+            @"Browse Container":             @"folder.badge.gearshape",
+            @"Cookies":                      @"birthday.cake",
+            @"Keychain":                     @"key",
+            @"Push Notifications":           @"bell.badge",
+
+            // Miscellaneous
+            @"UIScreen.main":               @"display",
             @"UIDevice.current":             @"iphone",
             @"UIPasteboard.general":         @"doc.on.clipboard",
             @"NSURLSession.shared":          @"antenna.radiowaves.left.and.right",
@@ -100,26 +134,19 @@
             @"NSCalendar.current":           @"calendar",
             @"NSRunLoop.main":               @"arrow.triangle.2.circlepath",
             @"NSThread.main":                @"line.3.horizontal",
-            @"NSOperationQueue.main":        @"square.stack.3d.up",
-            @"Network History":              @"antenna.radiowaves.left.and.right",
-            @"System Log":                   @"doc.text.magnifyingglass",
-            @"Address Explorer":             @"magnifyingglass",
-            @"Runtime Browser":              @"books.vertical",
-            @"Live Objects":                 @"cube.transparent",
-            @"Push Notifications":           @"bell.badge",
-            @"Keychain":                     @"key",
-            @"Browse Bundle":                @"folder",
-            @"Browse Container":             @"folder.badge.gearshape",
-            @"Cookies":                      @"birthday.cake",
-            @"Runtime Analysis":             @"scope",
-            @"Class Hierarchy":              @"list.bullet.indent",
-            @"Memory Analyzer":              @"memorychip",
-            @"Hook Detector":                @"link",
-            @"Framework Browser":            @"books.vertical",
+            @"NSOperationQueue.main":         @"square.stack.3d.up",
+
+            // MRzefv Tools
+            @"UI Editor":                    @"rectangle.and.pencil.and.ellipsis",
+            @"Dylib Generator":              @"shippingbox",
+            @"Enhanced CFG":                 @"point.3.connected.trianglepath.dotted",
+            @"UI Profiles":                  @"doc.text"
         };
     });
+
     NSString *symbolName = symbols[title];
-    if (symbolName) {
+
+    if (symbolName.length) {
         cell.imageView.image = [UIImage systemImageNamed:symbolName];
         cell.imageView.tintColor = UIColor.systemBlueColor;
     } else {
@@ -128,7 +155,6 @@
 }
 
 @end
-
 
 @implementation AVX512GlobalsSection (Subscripting)
 
