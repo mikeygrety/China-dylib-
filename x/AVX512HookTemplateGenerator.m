@@ -17,6 +17,22 @@
 #import <stdlib.h>
 #import <stdint.h>
 
+#pragma mark - Tuning
+
+/*
+ * Objective-C runtime processes commonly have 5,000-15,000+ loaded
+ * classes once system frameworks are counted. Walking the full
+ * superclass chain of every one of them, PLUS resolving a dyld
+ * image + offset for every method along the way, is what was
+ * hanging the scan at "LOADING RUNTIME" indefinitely (or getting
+ * the extension/dylib host killed by the watchdog).
+ *
+ * Fix: cap how many classes the bulk scan processes, and defer
+ * image/offset resolution (the expensive dyld walk) until the
+ * user actually opens a specific method in the inspector.
+ */
+static NSUInteger const AVX512MaxScannedClasses = 1500;
+
 #pragma mark - Private Helpers
 
 static NSString *AVX512HumanType(const char *encoding)
@@ -184,6 +200,13 @@ static NSString *AVX512Hex32(uint32_t value)
             value];
 }
 
+/*
+ * Resolves which loaded Mach-O image an address falls inside,
+ * plus the slide and image-relative offset. This walks every
+ * loaded image's segment commands and is NOT cheap â call it
+ * lazily (on-demand, per method the user actually opens), never
+ * in a bulk per-method loop over thousands of classes.
+ */
 static NSString *AVX512ImageForAddress(uintptr_t address,
                                        uintptr_t *slideOut,
                                        uintptr_t *offsetOut)
@@ -581,7 +604,7 @@ static NSString *AVX512JSONEscape(NSString *value)
 
         case 1:
             return [NSString stringWithFormat:
-                    @"METHODS · %lu",
+                    @"METHODS Â· %lu",
                     (unsigned long)self.methods.count];
 
         case 2:
@@ -683,7 +706,7 @@ static NSString *AVX512JSONEscape(NSString *value)
 
         cell.detailTextLabel.text =
             [NSString stringWithFormat:
-             @"%@ · %@ · %lu %@",
+             @"%@ Â· %@ Â· %lu %@",
              origin,
              info.returnType,
              (unsigned long)info.argumentCount,
@@ -756,6 +779,13 @@ static NSString *AVX512JSONEscape(NSString *value)
                      completion:nil];
 }
 
+/*
+ * Image + offset resolution is deliberately done HERE, lazily,
+ * on the main thread, only for the one method the user opened â
+ * not during the bulk scan. This is the expensive dyld image
+ * walk that used to run once per method for every method of
+ * every scanned class.
+ */
 - (void)showMethod:(AVX512MethodInfo *)method
 {
     NSString *imp =
@@ -770,10 +800,13 @@ static NSString *AVX512JSONEscape(NSString *value)
             &slide,
             &offset);
 
+    if (image) {
+        method.imageName = image;
+        method.imageOffset = offset;
+    }
+
     uintptr_t finalOffset =
-        method.imageOffset
-        ? method.imageOffset
-        : offset;
+        method.imageOffset;
 
     NSString *message =
         [NSString stringWithFormat:
@@ -1095,6 +1128,9 @@ UISearchResultsUpdating
 @property (nonatomic, assign)
     BOOL loadingRuntimeClasses;
 
+@property (nonatomic, assign)
+    BOOL runtimeScanWasTruncated;
+
 @end
 
 @implementation AVX512HookTemplateGenerator
@@ -1214,6 +1250,20 @@ UISearchResultsUpdating
 
 #pragma mark - Runtime Discovery
 
+/*
+ * This used to hang at "LOADING RUNTIME" indefinitely on real
+ * apps because it walked every loaded class in the process
+ * (often thousands, once system frameworks are counted) and,
+ * for every method of every one of them, additionally resolved
+ * a dyld image + offset. That second part alone made the scan
+ * effectively O(classes x methods x loaded images).
+ *
+ * Fix: cap the number of classes the bulk scan will process
+ * (AVX512MaxScannedClasses), and never resolve image/offset
+ * here at all â that now happens lazily in the inspector when
+ * a method is actually opened. If the cap is hit, the header
+ * reflects it so it's visible rather than silently partial.
+ */
 - (void)loadRuntimeClasses
 {
     if (self.loadingRuntimeClasses) {
@@ -1222,6 +1272,11 @@ UISearchResultsUpdating
 
     self.loadingRuntimeClasses =
         YES;
+
+    self.runtimeScanWasTruncated =
+        NO;
+
+    [self.tableView reloadData];
 
     __weak typeof(self) weakSelf =
         self;
@@ -1242,11 +1297,25 @@ UISearchResultsUpdating
 
             NSMutableArray<AVX512ClassInfo *> *results =
                 [NSMutableArray arrayWithCapacity:
-                 count];
+                 MIN((NSUInteger)count,
+                     AVX512MaxScannedClasses)];
+
+            BOOL truncated =
+                NO;
+
+            NSUInteger processed =
+                0;
 
             for (uint32_t i = 0;
                  i < count;
                  i++) {
+
+                if (processed >=
+                    AVX512MaxScannedClasses) {
+                    truncated =
+                        YES;
+                    break;
+                }
 
                 @autoreleasepool {
 
@@ -1254,6 +1323,14 @@ UISearchResultsUpdating
                         classes[i];
 
                     if (!cls) {
+                        continue;
+                    }
+
+                    const char *cname =
+                        class_getName(cls);
+
+                    if (!cname ||
+                        cname[0] == '\0') {
                         continue;
                     }
 
@@ -1269,6 +1346,7 @@ UISearchResultsUpdating
 
                     if (info) {
                         [results addObject:info];
+                        processed++;
                     }
                 }
             }
@@ -1300,6 +1378,9 @@ UISearchResultsUpdating
                 strongSelf.loadingRuntimeClasses =
                     NO;
 
+                strongSelf.runtimeScanWasTruncated =
+                    truncated;
+
                 strongSelf.allClasses =
                     results;
 
@@ -1312,6 +1393,13 @@ UISearchResultsUpdating
     });
 }
 
+/*
+ * Per-class inspection. Method metadata (selector, encoding,
+ * return type, argument count, IMP address) is still collected
+ * up front since it's cheap runtime introspection. Image name
+ * and offset are intentionally NOT resolved here anymore â see
+ * loadRuntimeClasses and showMethod: above.
+ */
 - (AVX512ClassInfo *)inspectClass:(Class)cls
 {
     if (!cls) {
@@ -1435,20 +1523,17 @@ UISearchResultsUpdating
                         (uintptr_t)
                         methodInfo.implementation;
 
-                    uintptr_t slide =
-                        0;
-
-                    uintptr_t offset =
-                        0;
-
+                    /*
+                     * imageName / imageOffset are left unset here
+                     * on purpose. They're resolved lazily, once,
+                     * the first time this specific method is
+                     * opened in the inspector (showMethod:).
+                     */
                     methodInfo.imageName =
-                        AVX512ImageForAddress(
-                            methodInfo.implementationAddress,
-                            &slide,
-                            &offset);
+                        nil;
 
                     methodInfo.imageOffset =
-                        offset;
+                        0;
 
                     [methods addObject:
                      methodInfo];
@@ -1505,8 +1590,18 @@ UISearchResultsUpdating
         return @"NO CLASSES";
     }
 
+    if (self.runtimeScanWasTruncated) {
+
+        return [NSString stringWithFormat:
+                @"CLASSES Â· %lu (capped at %lu)",
+                (unsigned long)
+                self.filteredClasses.count,
+                (unsigned long)
+                AVX512MaxScannedClasses];
+    }
+
     return [NSString stringWithFormat:
-            @"CLASSES · %lu",
+            @"CLASSES Â· %lu",
             (unsigned long)
             self.filteredClasses.count];
 }
@@ -1531,7 +1626,7 @@ UISearchResultsUpdating
 
     cell.detailTextLabel.text =
         [NSString stringWithFormat:
-         @"%@ · %lu methods",
+         @"%@ Â· %lu methods",
          info.superclassName ?: @"No superclass",
          (unsigned long)
          info.methods.count];
