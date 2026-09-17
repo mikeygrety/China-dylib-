@@ -103,7 +103,6 @@ jobs:
             -miphoneos-version-min=14.0
             -dynamiclib
             -fobjc-arc
-            -include "$SRC/x/AVX512InspectorDataSource.h"
             -DCAPSTONE_HAS_ARM -DCAPSTONE_HAS_ARM64 -DCAPSTONE_HAS_AARCH64 -DCAPSTONE_USE_SYS_DYN_MEM
             -I"$SRC" -I"$SRC/x" -I"$SRC/x/capstone" -I"$SRC/x/capstone/include"
             -framework UIKit -framework Foundation -framework CoreGraphics
