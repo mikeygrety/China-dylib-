@@ -1,8 +1,9 @@
 //
 //  MRzefvUIEditor.m
-//  AVX512HookTemplateGenerator
+//  AVX512
 //
-//  MRzefv UI Editor by DELvEK.NET
+//  MRzefv UI Editor
+//  AVX512 by DELvEK.NET
 //
 
 #import "MRzefvUIEditor.h"
@@ -10,20 +11,6 @@
 #pragma mark - MRzefvUIChange
 
 @implementation MRzefvUIChange
-
-- (instancetype)init {
-    self = [super init];
-
-    if (self) {
-        _type = MRzefvUIChangeTypeText;
-        _targetClass = @"";
-        _hierarchyPath = @"";
-        _frame = CGRectZero;
-        _alignment = NSTextAlignmentNatural;
-    }
-
-    return self;
-}
 
 @end
 
@@ -35,7 +22,7 @@
     self = [super init];
 
     if (self) {
-        _format = @"MRzefv-UI";
+        _format = @"mrzefv-ui-profile";
         _version = 1;
         _changes = [NSMutableArray array];
     }
@@ -64,29 +51,36 @@
 }
 
 - (NSDictionary *)dictionaryRepresentation {
-    NSMutableArray *changes = [NSMutableArray arrayWithCapacity:self.changes.count];
+    NSMutableArray *serializedChanges = [NSMutableArray array];
 
     for (MRzefvUIChange *change in self.changes) {
-
         NSMutableDictionary *entry = [NSMutableDictionary dictionary];
 
         entry[@"type"] = @(change.type);
-        entry[@"targetClass"] = change.targetClass ?: @"";
-        entry[@"hierarchyPath"] = change.hierarchyPath ?: @"";
+
+        if (change.targetClass) {
+            entry[@"targetClass"] = change.targetClass;
+        }
+
+        if (change.hierarchyPath) {
+            entry[@"hierarchyPath"] = change.hierarchyPath;
+        }
 
         if (change.propertyName) {
-            entry[@"property"] = change.propertyName;
+            entry[@"propertyName"] = change.propertyName;
         }
 
         if (change.originalValue) {
             entry[@"originalValue"] = change.originalValue;
         }
 
-        if (change.newValue) {
-            entry[@"newValue"] = change.newValue;
+        if (change.replacementValue) {
+            entry[@"newValue"] = change.replacementValue;
         }
 
-        if (!CGRectIsEmpty(change.frame)) {
+        if (change.type == MRzefvUIChangeTypeFrame ||
+            change.type == MRzefvUIChangeTypeAddText) {
+
             entry[@"frame"] = @{
                 @"x": @(change.frame.origin.x),
                 @"y": @(change.frame.origin.y),
@@ -95,35 +89,39 @@
             };
         }
 
-        entry[@"alignment"] = @(change.alignment);
+        if (change.type == MRzefvUIChangeTypeAlignment) {
+            entry[@"alignment"] = @(change.alignment);
+        }
 
-        [changes addObject:entry];
+        [serializedChanges addObject:entry];
     }
 
     return @{
-        @"format": self.format ?: @"MRzefv-UI",
+        @"format": self.format ?: @"mrzefv-ui-profile",
         @"version": @(self.version),
-        @"changes": changes
+        @"changes": serializedChanges
     };
 }
 
-- (NSData *)JSONData:(NSError **)error {
+- (NSData *)JSONData {
     NSDictionary *dictionary = [self dictionaryRepresentation];
+
+    if (![NSJSONSerialization isValidJSONObject:dictionary]) {
+        return nil;
+    }
 
     return [NSJSONSerialization dataWithJSONObject:dictionary
                                            options:NSJSONWritingPrettyPrinted
-                                             error:error];
+                                             error:nil];
 }
 
 @end
 
-#pragma mark - Editor
+#pragma mark - MRzefvUIEditorController
 
 @interface MRzefvUIEditorController ()
 
-@property (nonatomic, strong) NSMutableDictionary<NSValue *, NSValue *> *originalFrames;
-@property (nonatomic, strong) NSMutableDictionary<NSValue *, NSNumber *> *originalHiddenStates;
-@property (nonatomic, strong) NSMutableDictionary<NSValue *, NSString *> *originalTexts;
+@property (nonatomic, strong) NSMutableDictionary<NSValue *, NSDictionary *> *previewState;
 
 @end
 
@@ -134,9 +132,7 @@
 
     if (self) {
         _profile = [MRzefvUIProfile new];
-        _originalFrames = [NSMutableDictionary dictionary];
-        _originalHiddenStates = [NSMutableDictionary dictionary];
-        _originalTexts = [NSMutableDictionary dictionary];
+        _previewState = [NSMutableDictionary dictionary];
     }
 
     return self;
@@ -147,115 +143,13 @@
 
     self.title = @"MRzefv UI Editor";
 
-    self.navigationItem.rightBarButtonItem =
-        [[UIBarButtonItem alloc] initWithTitle:@"Save"
-                                         style:UIBarButtonItemStyleDone
-                                        target:self
-                                        action:@selector(saveCurrentProfile)];
-
     self.tableView.rowHeight = 52.0;
+
+    [self.tableView registerClass:UITableViewCell.class
+           forCellReuseIdentifier:@"MRzefvCell"];
 }
 
-#pragma mark - Preview
-
-- (void)beginPreview {
-    UIView *view = self.selectedView;
-
-    if (!view) {
-        return;
-    }
-
-    NSValue *key = [NSValue valueWithNonretainedObject:view];
-
-    if (![self.originalFrames objectForKey:key]) {
-        self.originalFrames[key] = [NSValue valueWithCGRect:view.frame];
-    }
-
-    if (![self.originalHiddenStates objectForKey:key]) {
-        self.originalHiddenStates[key] = @(view.hidden);
-    }
-
-    if ([view isKindOfClass:[UILabel class]]) {
-        UILabel *label = (UILabel *)view;
-
-        if (![self.originalTexts objectForKey:key]) {
-            self.originalTexts[key] = label.text ?: @"";
-        }
-    }
-}
-
-- (void)resetPreview {
-    [self.originalFrames enumerateKeysAndObjectsUsingBlock:
-     ^(NSValue *key, NSValue *value, BOOL *stop) {
-
-        UIView *view = [key nonretainedObjectValue];
-
-        if (view) {
-            view.frame = value.CGRectValue;
-        }
-    }];
-
-    [self.originalHiddenStates enumerateKeysAndObjectsUsingBlock:
-     ^(NSValue *key, NSNumber *value, BOOL *stop) {
-
-        UIView *view = [key nonretainedObjectValue];
-
-        if (view) {
-            view.hidden = value.boolValue;
-        }
-    }];
-
-    [self.originalTexts enumerateKeysAndObjectsUsingBlock:
-     ^(NSValue *key, NSString *value, BOOL *stop) {
-
-        UIView *view = [key nonretainedObjectValue];
-
-        if ([view isKindOfClass:[UILabel class]]) {
-            ((UILabel *)view).text = value;
-        }
-    }];
-
-    [self.originalFrames removeAllObjects];
-    [self.originalHiddenStates removeAllObjects];
-    [self.originalTexts removeAllObjects];
-
-    [self.tableView reloadData];
-}
-
-#pragma mark - Profile
-
-- (void)saveCurrentProfile {
-    NSError *error = nil;
-
-    NSData *data = [self.profile JSONData:&error];
-
-    if (!data || error) {
-        NSLog(@"[MRzefv] Failed to serialize UI profile: %@", error);
-        return;
-    }
-
-    NSLog(@"[MRzefv] UI profile generated: %lu bytes",
-          (unsigned long)data.length);
-
-    NSLog(@"[MRzefv] Changes: %lu",
-          (unsigned long)self.profile.changes.count);
-
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"MRzefv UI Profile"
-                                             message:[NSString stringWithFormat:
-                                                      @"%lu UI changes ready for preview or dylib generation.",
-                                                      (unsigned long)self.profile.changes.count]
-                                      preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addAction:
-     [UIAlertAction actionWithTitle:@"OK"
-                              style:UIAlertActionStyleDefault
-                            handler:nil]];
-
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-#pragma mark - Table
+#pragma mark - Sections
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
     return 3;
@@ -280,7 +174,7 @@
 }
 
 - (NSString *)tableView:(UITableView *)tableView
-titleForHeaderInSection:(NSInteger)section {
+ titleForHeaderInSection:(NSInteger)section {
 
     switch (section) {
         case 0:
@@ -297,72 +191,486 @@ titleForHeaderInSection:(NSInteger)section {
     }
 }
 
+#pragma mark - Cells
+
 - (UITableViewCell *)tableView:(UITableView *)tableView
          cellForRowAtIndexPath:(NSIndexPath *)indexPath {
 
-    static NSString *identifier = @"MRzefvCell";
-
     UITableViewCell *cell =
-        [tableView dequeueReusableCellWithIdentifier:identifier];
-
-    if (!cell) {
-        cell =
-            [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
-                                   reuseIdentifier:identifier];
-    }
+        [tableView dequeueReusableCellWithIdentifier:@"MRzefvCell"
+                                        forIndexPath:indexPath];
 
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    cell.imageView.image = nil;
     cell.textLabel.text = nil;
-    cell.detailTextLabel.text = nil;
 
     if (indexPath.section == 0) {
-        cell.textLabel.text = @"Selected View";
 
-        if (self.selectedView) {
-            cell.detailTextLabel.text =
-                NSStringFromClass(self.selectedView.class);
-        } else {
-            cell.detailTextLabel.text = @"No view selected";
+        cell.textLabel.text = self.selectedView
+            ? NSStringFromClass(self.selectedView.class)
+            : @"Select View";
+
+        cell.imageView.image =
+            [UIImage systemImageNamed:@"viewfinder"];
+
+    } else if (indexPath.section == 1) {
+
+        switch (indexPath.row) {
+
+            case 0:
+                cell.textLabel.text = @"Change Text";
+                cell.imageView.image =
+                    [UIImage systemImageNamed:@"character.cursor.ibeam"];
+                break;
+
+            case 1:
+                cell.textLabel.text =
+                    self.selectedView.hidden ? @"Show View" : @"Hide View";
+                cell.imageView.image =
+                    [UIImage systemImageNamed:@"eye"];
+                break;
+
+            case 2:
+                cell.textLabel.text = @"Alignment";
+                cell.imageView.image =
+                    [UIImage systemImageNamed:@"text.alignleft"];
+                break;
+
+            case 3:
+                cell.textLabel.text = @"Position / Size";
+                cell.imageView.image =
+                    [UIImage systemImageNamed:@"arrow.up.left.and.arrow.down.right"];
+                break;
         }
 
-        return cell;
+    } else if (indexPath.section == 2) {
+
+        switch (indexPath.row) {
+
+            case 0:
+                cell.textLabel.text = @"Add Text";
+                cell.imageView.image =
+                    [UIImage systemImageNamed:@"plus.square"];
+                break;
+
+            case 1:
+                cell.textLabel.text = @"Save UI Profile";
+                cell.imageView.image =
+                    [UIImage systemImageNamed:@"square.and.arrow.down"];
+                break;
+        }
+    }
+
+    return cell;
+}
+
+#pragma mark - Selection
+
+- (void)tableView:(UITableView *)tableView
+didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+
+    if (indexPath.section == 0) {
+        [self beginViewSelection];
+        return;
     }
 
     if (indexPath.section == 1) {
 
         switch (indexPath.row) {
+
             case 0:
-                cell.textLabel.text = @"Change Text";
+                [self changeText];
                 break;
 
             case 1:
-                cell.textLabel.text = @"Hide / Show";
+                [self toggleHidden];
                 break;
 
             case 2:
-                cell.textLabel.text = @"Alignment";
+                [self changeAlignment];
                 break;
 
             case 3:
-                cell.textLabel.text = @"Position / Size";
+                [self changeFrame];
                 break;
         }
 
-        return cell;
+        return;
     }
 
     if (indexPath.section == 2) {
 
-        if (indexPath.row == 0) {
-            cell.textLabel.text = @"Add Text";
-        } else {
-            cell.textLabel.text = @"Save UI Profile";
-        }
+        switch (indexPath.row) {
 
-        return cell;
+            case 0:
+                [self addText];
+                break;
+
+            case 1:
+                [self saveCurrentProfile];
+                break;
+        }
+    }
+}
+
+#pragma mark - View Selection
+
+- (void)beginViewSelection {
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"MRzefv UI Editor"
+                                            message:@"View selection is ready for the live preview."
+                                     preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"OK"
+                                 style:UIAlertActionStyleDefault
+                               handler:nil]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - Preview
+
+- (void)beginPreview {
+    if (!self.selectedView) {
+        return;
     }
 
-    return cell;
+    NSValue *key = [NSValue valueWithNonretainedObject:self.selectedView];
+
+    if (!self.previewState[key]) {
+        self.previewState[key] = @{
+            @"frame": [NSValue valueWithCGRect:self.selectedView.frame],
+            @"hidden": @(self.selectedView.hidden),
+            @"alpha": @(self.selectedView.alpha)
+        };
+    }
+}
+
+- (void)resetPreview {
+    for (NSValue *key in self.previewState) {
+
+        UIView *view = key.nonretainedObjectValue;
+
+        if (!view) {
+            continue;
+        }
+
+        NSDictionary *state = self.previewState[key];
+
+        NSValue *frameValue = state[@"frame"];
+
+        if (frameValue) {
+            view.frame = frameValue.CGRectValue;
+        }
+
+        NSNumber *hidden = state[@"hidden"];
+
+        if (hidden) {
+            view.hidden = hidden.boolValue;
+        }
+
+        NSNumber *alpha = state[@"alpha"];
+
+        if (alpha) {
+            view.alpha = alpha.floatValue;
+        }
+    }
+
+    [self.previewState removeAllObjects];
+}
+
+#pragma mark - Change Text
+
+- (void)changeText {
+    if (!self.selectedView) {
+        return;
+    }
+
+    if (![self.selectedView isKindOfClass:UITextField.class] &&
+        ![self.selectedView isKindOfClass:UITextView.class] &&
+        ![self.selectedView isKindOfClass:UILabel.class] &&
+        ![self.selectedView isKindOfClass:UIButton.class]) {
+
+        return;
+    }
+
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"Change Text"
+                                            message:nil
+                                     preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"New text";
+    }];
+
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"Cancel"
+                                 style:UIAlertActionStyleCancel
+                               handler:nil]];
+
+    __weak typeof(self) weakSelf = self;
+
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"Apply"
+                                 style:UIAlertActionStyleDefault
+                               handler:^(UIAlertAction *action) {
+
+        __strong typeof(weakSelf) self = weakSelf;
+
+        NSString *text = alert.textFields.firstObject.text;
+
+        if (!text.length) {
+            return;
+        }
+
+        [self beginPreview];
+
+        NSString *original = nil;
+
+        if ([self.selectedView isKindOfClass:UILabel.class]) {
+            original = [(UILabel *)self.selectedView text];
+            [(UILabel *)self.selectedView setText:text];
+
+        } else if ([self.selectedView isKindOfClass:UITextField.class]) {
+            original = [(UITextField *)self.selectedView text];
+            [(UITextField *)self.selectedView setText:text];
+
+        } else if ([self.selectedView isKindOfClass:UITextView.class]) {
+            original = [(UITextView *)self.selectedView text];
+            [(UITextView *)self.selectedView setText:text];
+
+        } else if ([self.selectedView isKindOfClass:UIButton.class]) {
+            original = [(UIButton *)self.selectedView
+                        titleForState:UIControlStateNormal];
+
+            [(UIButton *)self.selectedView
+                setTitle:text
+                forState:UIControlStateNormal];
+        }
+
+        MRzefvUIChange *change = [MRzefvUIChange new];
+
+        change.type = MRzefvUIChangeTypeText;
+        change.targetClass =
+            NSStringFromClass(self.selectedView.class);
+        change.originalValue = original;
+        change.replacementValue = text;
+        change.propertyName = @"text";
+
+        [self.profile addChange:change];
+
+        [self.tableView reloadData];
+    }]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - Hidden
+
+- (void)toggleHidden {
+    if (!self.selectedView) {
+        return;
+    }
+
+    [self beginPreview];
+
+    BOOL hidden = !self.selectedView.hidden;
+
+    self.selectedView.hidden = hidden;
+
+    MRzefvUIChange *change = [MRzefvUIChange new];
+
+    change.type = MRzefvUIChangeTypeHidden;
+    change.targetClass =
+        NSStringFromClass(self.selectedView.class);
+    change.propertyName = @"hidden";
+    change.originalValue =
+        hidden ? @"NO" : @"YES";
+    change.replacementValue =
+        hidden ? @"YES" : @"NO";
+
+    [self.profile addChange:change];
+
+    [self.tableView reloadData];
+}
+
+#pragma mark - Alignment
+
+- (void)changeAlignment {
+    if (![self.selectedView isKindOfClass:UILabel.class]) {
+        return;
+    }
+
+    UILabel *label = (UILabel *)self.selectedView;
+
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"Alignment"
+                                            message:nil
+                                     preferredStyle:UIAlertControllerStyleActionSheet];
+
+    NSArray *names = @[
+        @"Left",
+        @"Center",
+        @"Right",
+        @"Justified",
+        @"Natural"
+    ];
+
+    NSArray *values = @[
+        @(NSTextAlignmentLeft),
+        @(NSTextAlignmentCenter),
+        @(NSTextAlignmentRight),
+        @(NSTextAlignmentJustified),
+        @(NSTextAlignmentNatural)
+    ];
+
+    __weak typeof(self) weakSelf = self;
+
+    for (NSUInteger i = 0; i < names.count; i++) {
+
+        [alert addAction:
+            [UIAlertAction actionWithTitle:names[i]
+                                     style:UIAlertActionStyleDefault
+                                   handler:^(UIAlertAction *action) {
+
+            __strong typeof(weakSelf) self = weakSelf;
+
+            [self beginPreview];
+
+            NSTextAlignment oldAlignment = label.textAlignment;
+            NSTextAlignment newAlignment = [values[i] integerValue];
+
+            label.textAlignment = newAlignment;
+
+            MRzefvUIChange *change = [MRzefvUIChange new];
+
+            change.type = MRzefvUIChangeTypeAlignment;
+            change.targetClass =
+                NSStringFromClass(label.class);
+            change.propertyName = @"textAlignment";
+            change.originalValue =
+                @(oldAlignment).stringValue;
+            change.replacementValue =
+                @(newAlignment).stringValue;
+            change.alignment = newAlignment;
+
+            [self.profile addChange:change];
+
+            [self.tableView reloadData];
+        }]];
+    }
+
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"Cancel"
+                                 style:UIAlertActionStyleCancel
+                               handler:nil]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - Frame
+
+- (void)changeFrame {
+    if (!self.selectedView) {
+        return;
+    }
+
+    [self beginPreview];
+
+    CGRect oldFrame = self.selectedView.frame;
+
+    CGFloat x = oldFrame.origin.x + 10.0;
+    CGFloat y = oldFrame.origin.y + 10.0;
+
+    CGRect newFrame =
+        CGRectMake(x,
+                   y,
+                   oldFrame.size.width,
+                   oldFrame.size.height);
+
+    self.selectedView.frame = newFrame;
+
+    MRzefvUIChange *change = [MRzefvUIChange new];
+
+    change.type = MRzefvUIChangeTypeFrame;
+    change.targetClass =
+        NSStringFromClass(self.selectedView.class);
+    change.propertyName = @"frame";
+    change.originalValue =
+        NSStringFromCGRect(oldFrame);
+    change.replacementValue =
+        NSStringFromCGRect(newFrame);
+    change.frame = newFrame;
+
+    [self.profile addChange:change];
+}
+
+#pragma mark - Add Text
+
+- (void)addText {
+    if (!self.selectedView) {
+        return;
+    }
+
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(
+        20.0,
+        20.0,
+        200.0,
+        40.0
+    )];
+
+    label.text = @"MRzefv";
+    label.textAlignment = NSTextAlignmentCenter;
+    label.backgroundColor =
+        [UIColor colorWithWhite:0.0 alpha:0.08];
+
+    [self.selectedView addSubview:label];
+
+    MRzefvUIChange *change = [MRzefvUIChange new];
+
+    change.type = MRzefvUIChangeTypeAddText;
+    change.targetClass =
+        NSStringFromClass(self.selectedView.class);
+    change.propertyName = @"UILabel";
+    change.replacementValue = label.text;
+    change.frame = label.frame;
+
+    [self.profile addChange:change];
+}
+
+#pragma mark - Save
+
+- (void)saveCurrentProfile {
+    NSData *data = [self.profile JSONData];
+
+    if (!data) {
+        return;
+    }
+
+    NSURL *directory =
+        [[[NSFileManager defaultManager]
+          URLsForDirectory:NSDocumentDirectory
+          inDomains:NSUserDomainMask] firstObject];
+
+    NSURL *file =
+        [directory URLByAppendingPathComponent:@"MRzefv-ui-profile.json"];
+
+    [data writeToURL:file atomically:YES];
+
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"UI Profile Saved"
+                                            message:file.lastPathComponent
+                                     preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"OK"
+                                 style:UIAlertActionStyleDefault
+                               handler:nil]];
+
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 @end
