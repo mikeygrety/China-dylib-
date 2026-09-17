@@ -44,7 +44,8 @@ static NSString *AVX512HumanType(const char *encoding)
         case '^': return @"pointer";
         case '*': return @"char *";
         case '?': return @"unknown";
-        default:  return [NSString stringWithFormat:@"type '%c'", encoding[0]];
+        default:
+            return [NSString stringWithFormat:@"type '%c'", encoding[0]];
     }
 }
 
@@ -82,27 +83,32 @@ static NSString *AVX512ImageForAddress(uintptr_t address,
                                        uintptr_t *slideOut,
                                        uintptr_t *offsetOut)
 {
+    if (address == 0) {
+        return nil;
+    }
+
     uint32_t count = _dyld_image_count();
 
     for (uint32_t i = 0; i < count; i++) {
-        const struct mach_header *header = _dyld_get_image_header(i);
+
+        const struct mach_header *header =
+            _dyld_get_image_header(i);
 
         if (!header) {
             continue;
         }
 
-        intptr_t slide = _dyld_get_image_vmaddr_slide(i);
-        uintptr_t base = (uintptr_t)header + slide;
+        intptr_t slide =
+            _dyld_get_image_vmaddr_slide(i);
 
-        /*
-         * We do not attempt to infer an exact image size here.
-         * For a runtime IMP, the image containing the address is
-         * identified conservatively using Mach-O load commands.
-         */
-        uintptr_t minAddress = base;
-        uintptr_t maxAddress = base;
+        uintptr_t base =
+            (uintptr_t)header + (uintptr_t)slide;
 
-        const uint8_t *cursor = (const uint8_t *)header;
+        uintptr_t minAddress = UINTPTR_MAX;
+        uintptr_t maxAddress = 0;
+
+        const uint8_t *cursor =
+            (const uint8_t *)header;
 
         if (header->magic == MH_MAGIC_64 ||
             header->magic == MH_CIGAM_64) {
@@ -111,38 +117,55 @@ static NSString *AVX512ImageForAddress(uintptr_t address,
                 (const struct mach_header_64 *)cursor;
 
             const struct load_command *cmd =
-                (const struct load_command *)(cursor + sizeof(struct mach_header_64));
+                (const struct load_command *)
+                (cursor + sizeof(struct mach_header_64));
 
             for (uint32_t j = 0; j < mh->ncmds; j++) {
+
                 if (cmd->cmdsize < sizeof(struct load_command)) {
                     break;
                 }
 
                 if (cmd->cmd == LC_SEGMENT_64) {
+
                     const struct segment_command_64 *seg =
                         (const struct segment_command_64 *)cmd;
 
                     uintptr_t segStart =
-                        (uintptr_t)seg->vmaddr + (uintptr_t)slide;
+                        (uintptr_t)seg->vmaddr +
+                        (uintptr_t)slide;
 
                     uintptr_t segEnd =
-                        segStart + (uintptr_t)seg->vmsize;
-
-                    if (segEnd > maxAddress) {
-                        maxAddress = segEnd;
-                    }
+                        segStart +
+                        (uintptr_t)seg->vmsize;
 
                     if (segStart < minAddress) {
                         minAddress = segStart;
                     }
+
+                    if (segEnd > maxAddress) {
+                        maxAddress = segEnd;
+                    }
                 }
 
-                cmd = (const struct load_command *)
+                cmd =
+                    (const struct load_command *)
                     ((const uint8_t *)cmd + cmd->cmdsize);
             }
         }
 
-        if (address >= minAddress && address < maxAddress) {
+        /*
+         * If no valid segment range was discovered, don't attempt
+         * to classify the address using an invalid range.
+         */
+        if (minAddress == UINTPTR_MAX ||
+            maxAddress <= minAddress) {
+            continue;
+        }
+
+        if (address >= minAddress &&
+            address < maxAddress) {
+
             if (slideOut) {
                 *slideOut = (uintptr_t)slide;
             }
@@ -151,7 +174,8 @@ static NSString *AVX512ImageForAddress(uintptr_t address,
                 *offsetOut = address - base;
             }
 
-            const char *name = _dyld_get_image_name(i);
+            const char *name =
+                _dyld_get_image_name(i);
 
             if (name) {
                 return [[NSString stringWithUTF8String:name]
@@ -168,56 +192,86 @@ static NSString *AVX512ImageForAddress(uintptr_t address,
 static NSString *AVX512InstructionExplanation(NSString *mnemonic,
                                               NSString *operands)
 {
-    NSString *m = mnemonic.lowercaseString ?: @"";
+    NSString *m =
+        mnemonic.lowercaseString ?: @"";
 
     if ([m isEqualToString:@"nop"]) {
-        return @"NOP performs no architectural operation. It is useful as a test replacement when you want to observe what changes when an instruction is intentionally skipped.";
+        return
+        @"NOP performs no architectural operation. "
+        @"It is useful as a controlled test replacement when "
+        @"observing instruction-flow changes.";
     }
 
     if ([m hasPrefix:@"mov"]) {
         return [NSString stringWithFormat:
-                @"MOV copies a value between registers or between a register and another operand. Here the operands are %@.",
+                @"MOV copies a value between registers or operands. "
+                @"Here the operands are %@.",
                 operands ?: @""];
     }
 
-    if ([m hasPrefix:@"ldr"] || [m hasPrefix:@"ldp"]) {
-        return @"This is a load instruction. It reads data from memory into one or more registers.";
+    if ([m hasPrefix:@"ldr"] ||
+        [m hasPrefix:@"ldp"]) {
+        return
+        @"This is a load instruction. It reads data from memory "
+        @"into one or more registers.";
     }
 
-    if ([m hasPrefix:@"str"] || [m hasPrefix:@"stp"]) {
-        return @"This is a store instruction. It writes register values to memory, commonly as part of stack-frame setup or teardown.";
+    if ([m hasPrefix:@"str"] ||
+        [m hasPrefix:@"stp"]) {
+        return
+        @"This is a store instruction. It writes register values "
+        @"to memory, commonly as part of stack-frame setup or "
+        @"data storage.";
     }
 
-    if ([m hasPrefix:@"cmp"] || [m hasPrefix:@"tst"]) {
-        return @"This instruction compares or tests values and updates condition flags used by later conditional branches.";
+    if ([m hasPrefix:@"cmp"] ||
+        [m hasPrefix:@"tst"]) {
+        return
+        @"This instruction compares or tests values and updates "
+        @"condition flags used by later conditional branches.";
     }
 
     if ([m hasPrefix:@"b."] ||
         [m isEqualToString:@"b"] ||
         [m isEqualToString:@"br"] ||
         [m isEqualToString:@"blr"]) {
-        return @"This instruction changes control flow. Conditional branches depend on processor flags, while register branches use an address stored in a register.";
+        return
+        @"This instruction changes control flow. Conditional "
+        @"branches depend on processor flags, while register "
+        @"branches use an address stored in a register.";
     }
 
     if ([m isEqualToString:@"bl"]) {
-        return @"BL performs a function call and records the return address in the link register.";
+        return
+        @"BL performs a function call and records the return "
+        @"address in the link register.";
     }
 
     if ([m isEqualToString:@"ret"]) {
-        return @"RET returns from the current function using the address in the link register.";
+        return
+        @"RET returns from the current function using the "
+        @"address in the link register.";
     }
 
-    if ([m hasPrefix:@"add"] || [m hasPrefix:@"sub"]) {
-        return @"This arithmetic instruction adds or subtracts integer values, commonly for address calculation, counters, or stack management.";
+    if ([m hasPrefix:@"add"] ||
+        [m hasPrefix:@"sub"]) {
+        return
+        @"This arithmetic instruction adds or subtracts integer "
+        @"values, commonly for address calculation, counters, "
+        @"or stack management.";
     }
 
     if ([m hasPrefix:@"and"] ||
         [m hasPrefix:@"orr"] ||
         [m hasPrefix:@"eor"]) {
-        return @"This is a bitwise operation performed on register values.";
+        return
+        @"This is a bitwise operation performed on register values.";
     }
 
-    return @"AVX512 identified this as an ARM64 instruction. The mnemonic and operands describe the operation performed by the CPU.";
+    return
+    @"AVX512 identified this as an ARM64 instruction. "
+    @"The mnemonic and operands describe the operation performed "
+    @"by the CPU.";
 }
 
 #pragma mark - Method Model
@@ -245,7 +299,6 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 @interface AVX512ClassInspectorController : UITableViewController
 
 @property (nonatomic, strong) AVX512ClassInfo *classInfo;
-
 @property (nonatomic, strong) NSArray<AVX512MethodInfo *> *methods;
 
 @end
@@ -254,7 +307,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 - (instancetype)initWithClassInfo:(AVX512ClassInfo *)classInfo
 {
-    self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    self =
+        [super initWithStyle:UITableViewStyleInsetGrouped];
 
     if (self) {
         _classInfo = classInfo;
@@ -275,7 +329,9 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          target:self
          action:@selector(close)];
 
-    self.tableView.rowHeight = UITableViewAutomaticDimension;
+    self.tableView.rowHeight =
+        UITableViewAutomaticDimension;
+
     self.tableView.estimatedRowHeight = 72.0;
 
     self.tableView.accessibilityIdentifier =
@@ -284,10 +340,12 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 - (void)close
 {
-    [self dismissViewControllerAnimated:YES completion:nil];
+    [self dismissViewControllerAnimated:YES
+                             completion:nil];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
+- (NSInteger)numberOfSectionsInTableView:
+    (UITableView *)tableView
 {
     return 3;
 }
@@ -296,6 +354,7 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
  numberOfRowsInSection:(NSInteger)section
 {
     switch (section) {
+
         case 0:
             return 4;
 
@@ -314,11 +373,13 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
  titleForHeaderInSection:(NSInteger)section
 {
     switch (section) {
+
         case 0:
             return @"CLASS";
 
         case 1:
-            return [NSString stringWithFormat:@"METHODS · %lu",
+            return [NSString stringWithFormat:
+                    @"METHODS · %lu",
                     (unsigned long)self.methods.count];
 
         case 2:
@@ -329,8 +390,10 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     }
 }
 
-- (UITableViewCell *)tableView:(UITableView *)tableView
-         cellForRowAtIndexPath:(NSIndexPath *)indexPath
+- (UITableViewCell *)tableView:
+    (UITableView *)tableView
+    cellForRowAtIndexPath:
+    (NSIndexPath *)indexPath
 {
     UITableViewCell *cell =
         [[UITableViewCell alloc]
@@ -359,7 +422,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
             case 2:
                 cell.textLabel.text = @"Methods";
                 cell.detailTextLabel.text =
-                    [NSString stringWithFormat:@"%lu discovered",
+                    [NSString stringWithFormat:
+                     @"%lu discovered",
                      (unsigned long)self.methods.count];
                 break;
 
@@ -382,14 +446,18 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
             UITableViewCellAccessoryDisclosureIndicator;
 
         cell.textLabel.text =
-            [NSString stringWithFormat:@"-%@",
+            [NSString stringWithFormat:
+             @"-%@",
              info.selectorName];
 
         NSString *origin =
-            info.inherited ? @"Inherited" : @"Declared here";
+            info.inherited
+            ? @"Inherited"
+            : @"Declared here";
 
         cell.detailTextLabel.text =
-            [NSString stringWithFormat:@"%@ · %@ · %lu argument%@",
+            [NSString stringWithFormat:
+             @"%@ · %@ · %lu argument%@",
              origin,
              info.returnType,
              (unsigned long)info.argumentCount,
@@ -398,7 +466,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
         return cell;
     }
 
-    cell.textLabel.text = @"How to read a method";
+    cell.textLabel.text =
+        @"How to read a method";
 
     cell.detailTextLabel.text =
         @"Tap a method to inspect its runtime IMP, image, "
@@ -413,9 +482,11 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 - (void)tableView:(UITableView *)tableView
  didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    [tableView deselectRowAtIndexPath:indexPath
+                             animated:YES];
 
     if (indexPath.section == 1) {
+
         AVX512MethodInfo *method =
             self.methods[indexPath.row];
 
@@ -432,16 +503,18 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 {
     UIAlertController *alert =
         [UIAlertController
-         alertControllerWithTitle:@"Understanding the Implementation"
+         alertControllerWithTitle:
+         @"Understanding the Implementation"
          message:
-         @"The Objective-C runtime gives AVX512 the method's selector, "
-         @"type encoding, and IMP address.\n\n"
+         @"The Objective-C runtime gives AVX512 the method's "
+         @"selector, type encoding, and IMP address.\n\n"
          @"The IMP is the native implementation entry point. "
-         @"From there, an ARM64 analysis layer can associate the address "
+         @"An ARM64 analysis layer can associate that address "
          @"with a Mach-O image and decode instructions.\n\n"
          @"NOP is exposed as a controlled test-patch concept. "
-         @"The generated test project records the proposed replacement "
-         @"instead of silently modifying the original binary."
+         @"The generated test project records the proposed "
+         @"replacement instead of silently modifying the "
+         @"original binary."
          preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addAction:
@@ -449,7 +522,9 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
                               style:UIAlertActionStyleDefault
                             handler:nil]];
 
-    [self presentViewController:alert animated:YES completion:nil];
+    [self presentViewController:alert
+                       animated:YES
+                     completion:nil];
 }
 
 - (void)showMethod:(AVX512MethodInfo *)method
@@ -461,9 +536,10 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     uintptr_t offset = 0;
 
     NSString *image =
-        AVX512ImageForAddress(method.implementationAddress,
-                              &slide,
-                              &offset);
+        AVX512ImageForAddress(
+            method.implementationAddress,
+            &slide,
+            &offset);
 
     NSString *message =
         [NSString stringWithFormat:
@@ -475,9 +551,9 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          @"Image\n%@\n\n"
          @"Image offset\n0x%llX\n\n"
          @"Implementation\n"
-         @"The IMP is the native entry point associated with this "
-         @"Objective-C method. The next analysis layer can decode "
-         @"instructions beginning at this address.",
+         @"The IMP is the native entry point associated with "
+         @"this Objective-C method. The next analysis layer "
+         @"can decode instructions beginning at this address.",
          method.selectorName,
          method.returnType,
          (unsigned long)method.argumentCount,
@@ -485,12 +561,16 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          imp,
          image ?: method.imageName ?: @"Unknown",
          (unsigned long long)
-         (method.imageOffset ? method.imageOffset : offset)];
+         (method.imageOffset
+          ? method.imageOffset
+          : offset)];
 
     UIAlertController *alert =
         [UIAlertController
          alertControllerWithTitle:
-         [NSString stringWithFormat:@"-%@", method.selectorName]
+         [NSString stringWithFormat:
+          @"-%@",
+          method.selectorName]
          message:message
          preferredStyle:UIAlertControllerStyleActionSheet];
 
@@ -517,6 +597,7 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
         alert.popoverPresentationController;
 
     popover.sourceView = self.view;
+
     popover.sourceRect =
         CGRectMake(CGRectGetMidX(self.view.bounds),
                    CGRectGetMidY(self.view.bounds),
@@ -538,11 +619,12 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          @"Runtime signature\n%@\n\n"
          @"Encoding\n%@\n\n"
          @"Learning note\n"
-         @"On ARM64, Objective-C arguments are passed using the "
-         @"platform calling convention. The first object argument "
-         @"normally begins in x2 because x0 is self and x1 is _cmd.\n\n"
-         @"A Capstone-backed implementation view can use this IMP "
-         @"address as the starting point for instruction decoding.",
+         @"On ARM64, Objective-C arguments use the platform "
+         @"calling convention. x0 and x1 contain self and _cmd "
+         @"for a normal Objective-C instance method.\n\n"
+         @"A Capstone-backed implementation view can use this "
+         @"IMP address as the starting point for instruction "
+         @"decoding.",
          AVX512IMPString(method.implementation),
          (unsigned long long)method.implementationAddress,
          method.returnType,
@@ -559,7 +641,9 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
                               style:UIAlertActionStyleDefault
                             handler:nil]];
 
-    [self presentViewController:alert animated:YES completion:nil];
+    [self presentViewController:alert
+                       animated:YES
+                     completion:nil];
 }
 
 - (void)showNOPPreview:(AVX512MethodInfo *)method
@@ -591,10 +675,13 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
                               style:UIAlertActionStyleCancel
                             handler:nil]];
 
-    [self presentViewController:alert animated:YES completion:nil];
+    [self presentViewController:alert
+                       animated:YES
+                     completion:nil];
 }
 
-- (void)createTestProjectForMethod:(AVX512MethodInfo *)method
+- (void)createTestProjectForMethod:
+    (AVX512MethodInfo *)method
 {
     NSString *directory =
         [NSTemporaryDirectory()
@@ -626,14 +713,16 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
           "  \"imp\": \"0x%llX\",\n"
           "  \"patch\": {\n"
           "    \"type\": \"NOP\",\n"
-          "    \"originalInstruction\": \"<decoded ARM64 instruction>\",\n"
+          "    \"originalInstruction\": "
+          "\"<decoded ARM64 instruction>\",\n"
           "    \"replacementInstruction\": \"nop\",\n"
           "    \"reversible\": true\n"
           "  }\n"
           "}\n",
          self.classInfo.className,
          method.selectorName,
-         (unsigned long long)method.implementationAddress];
+         (unsigned long long)
+         method.implementationAddress];
 
     NSString *manifestPath =
         [directory stringByAppendingPathComponent:
@@ -663,16 +752,18 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
           "The original application binary is not modified by "
           "the generator.\n\n"
           "## Next analysis stage\n\n"
-          "A Capstone-backed build can resolve the implementation "
+          "A Capstone-backed analyzer can resolve the implementation "
           "address, decode the instruction stream, construct basic "
           "blocks, and present the proposed patch for review before "
           "a test build is produced.\n",
          self.classInfo.className,
          method.selectorName,
-         (unsigned long long)method.implementationAddress];
+         (unsigned long long)
+         method.implementationAddress];
 
     NSString *readmePath =
-        [directory stringByAppendingPathComponent:@"README.md"];
+        [directory stringByAppendingPathComponent:
+         @"README.md"];
 
     [readme writeToFile:readmePath
              atomically:YES
@@ -722,11 +813,20 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 @interface AVX512HookTemplateGenerator ()
 
-@property (nonatomic, strong) NSArray<AVX512ClassInfo *> *allClasses;
-@property (nonatomic, strong) NSArray<AVX512ClassInfo *> *filteredClasses;
-@property (nonatomic, strong) NSMutableSet<NSString *> *selectedClasses;
+@property (nonatomic, strong)
+    NSArray<AVX512ClassInfo *> *allClasses;
 
-@property (nonatomic, strong) UISearchController *searchController;
+@property (nonatomic, strong)
+    NSArray<AVX512ClassInfo *> *filteredClasses;
+
+@property (nonatomic, strong)
+    NSMutableSet<NSString *> *selectedClasses;
+
+@property (nonatomic, strong)
+    UISearchController *searchController;
+
+@property (nonatomic, assign)
+    BOOL loadingRuntimeClasses;
 
 @end
 
@@ -746,7 +846,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     self.tableView.rowHeight =
         UITableViewAutomaticDimension;
 
-    self.tableView.estimatedRowHeight = 72.0;
+    self.tableView.estimatedRowHeight =
+        72.0;
 
     self.navigationItem.leftBarButtonItem =
         [[UIBarButtonItem alloc]
@@ -779,6 +880,10 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
     [self configureSearch];
 
+    /*
+     * Runtime enumeration can be very large.
+     * Do not perform the entire class/method walk on the UI thread.
+     */
     [self loadRuntimeClasses];
 }
 
@@ -793,14 +898,17 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     self.searchController.obscuresBackgroundDuringPresentation =
         NO;
 
-    self.searchController.searchResultsUpdater = self;
+    self.searchController.searchResultsUpdater =
+        self;
 
     self.navigationItem.searchController =
         self.searchController;
 
-    self.navigationItem.hidesSearchBarWhenScrolling = NO;
+    self.navigationItem.hidesSearchBarWhenScrolling =
+        NO;
 
-    self.definesPresentationContext = YES;
+    self.definesPresentationContext =
+        YES;
 }
 
 - (void)updateSearchResultsForSearchController:
@@ -809,20 +917,24 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     NSString *query =
         searchController.searchBar.text;
 
+    NSArray<AVX512ClassInfo *> *source =
+        self.allClasses ?: @[];
+
     if (!query.length) {
-        self.filteredClasses = self.allClasses;
+        self.filteredClasses = source;
     } else {
+
         NSPredicate *predicate =
             [NSPredicate predicateWithBlock:
              ^BOOL(AVX512ClassInfo *obj,
-                   NSDictionary<NSString *,id> *_) {
+                   NSDictionary<NSString *, id> *_) {
 
             return [obj.className
                     localizedCaseInsensitiveContainsString:query];
         }];
 
         self.filteredClasses =
-            [self.allClasses filteredArrayUsingPredicate:predicate];
+            [source filteredArrayUsingPredicate:predicate];
     }
 
     [self.tableView reloadData];
@@ -832,51 +944,81 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 - (void)loadRuntimeClasses
 {
-    uint32_t count = 0;
-
-    Class *classes =
-        objc_copyClassList(&count);
-
-    NSMutableArray<AVX512ClassInfo *> *results =
-        [NSMutableArray arrayWithCapacity:count];
-
-    for (uint32_t i = 0; i < count; i++) {
-
-        Class cls = classes[i];
-
-        if (!cls) {
-            continue;
-        }
-
-        NSString *name =
-            NSStringFromClass(cls);
-
-        if (!name.length) {
-            continue;
-        }
-
-        AVX512ClassInfo *info =
-            [self inspectClass:cls];
-
-        if (info) {
-            [results addObject:info];
-        }
+    if (self.loadingRuntimeClasses) {
+        return;
     }
 
-    free(classes);
+    self.loadingRuntimeClasses = YES;
 
-    [results sortUsingComparator:
-     ^NSComparisonResult(AVX512ClassInfo *a,
-                         AVX512ClassInfo *b) {
+    /*
+     * Snapshot the runtime on a background queue.
+     *
+     * The resulting model objects are constructed away from the
+     * main thread. UI state is assigned back on the main queue.
+     */
+    dispatch_async(
+        dispatch_get_global_queue(
+            QOS_CLASS_USER_INITIATED,
+            0),
+        ^{
 
-        return [a.className
-                localizedCaseInsensitiveCompare:b.className];
-    }];
+        uint32_t count = 0;
 
-    self.allClasses = results;
-    self.filteredClasses = results;
+        Class *classes =
+            objc_copyClassList(&count);
 
-    [self.tableView reloadData];
+        NSMutableArray<AVX512ClassInfo *> *results =
+            [NSMutableArray arrayWithCapacity:count];
+
+        for (uint32_t i = 0; i < count; i++) {
+
+            @autoreleasepool {
+
+                Class cls = classes[i];
+
+                if (!cls) {
+                    continue;
+                }
+
+                NSString *name =
+                    NSStringFromClass(cls);
+
+                if (!name.length) {
+                    continue;
+                }
+
+                AVX512ClassInfo *info =
+                    [self inspectClass:cls];
+
+                if (info) {
+                    [results addObject:info];
+                }
+            }
+        }
+
+        free(classes);
+
+        [results sortUsingComparator:
+         ^NSComparisonResult(AVX512ClassInfo *a,
+                             AVX512ClassInfo *b) {
+
+            return [a.className
+                    localizedCaseInsensitiveCompare:
+                    b.className];
+        }];
+
+        dispatch_async(
+            dispatch_get_main_queue(),
+            ^{
+
+            self.loadingRuntimeClasses = NO;
+
+            self.allClasses = results;
+            self.filteredClasses = results;
+
+            [self.tableView reloadData];
+        });
+    });
 }
 
 - (AVX512ClassInfo *)inspectClass:(Class)cls
@@ -897,7 +1039,9 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
         class_getSuperclass(cls);
 
     info.superclassName =
-        superclass ? NSStringFromClass(superclass) : @"None";
+        superclass
+        ? NSStringFromClass(superclass)
+        : @"None";
 
     NSMutableArray<AVX512MethodInfo *> *methods =
         [NSMutableArray array];
@@ -913,80 +1057,93 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
         unsigned int count = 0;
 
         Method *list =
-            class_copyMethodList(current, &count);
+            class_copyMethodList(
+                current,
+                &count);
 
-        for (unsigned int i = 0; i < count; i++) {
+        if (list) {
 
-            Method method = list[i];
+            for (unsigned int i = 0;
+                 i < count;
+                 i++) {
 
-            if (!method) {
-                continue;
+                @autoreleasepool {
+
+                    Method method = list[i];
+
+                    if (!method) {
+                        continue;
+                    }
+
+                    SEL selector =
+                        method_getName(method);
+
+                    if (!selector) {
+                        continue;
+                    }
+
+                    NSString *selectorName =
+                        NSStringFromSelector(selector);
+
+                    if ([seen containsObject:selectorName]) {
+                        continue;
+                    }
+
+                    [seen addObject:selectorName];
+
+                    const char *encoding =
+                        method_getTypeEncoding(method);
+
+                    AVX512MethodInfo *methodInfo =
+                        [AVX512MethodInfo new];
+
+                    methodInfo.selectorName =
+                        selectorName;
+
+                    methodInfo.typeEncoding =
+                        encoding
+                        ? [NSString stringWithUTF8String:encoding]
+                        : @"";
+
+                    methodInfo.returnType =
+                        AVX512HumanType(encoding);
+
+                    methodInfo.argumentCount =
+                        AVX512ExplicitArgumentCount(method);
+
+                    methodInfo.inherited =
+                        inherited;
+
+                    methodInfo.implementation =
+                        method_getImplementation(method);
+
+                    methodInfo.implementationAddress =
+                        (uintptr_t)
+                        methodInfo.implementation;
+
+                    uintptr_t slide = 0;
+                    uintptr_t offset = 0;
+
+                    methodInfo.imageName =
+                        AVX512ImageForAddress(
+                            methodInfo.implementationAddress,
+                            &slide,
+                            &offset);
+
+                    methodInfo.imageOffset =
+                        offset;
+
+                    [methods addObject:methodInfo];
+                }
             }
 
-            SEL selector =
-                method_getName(method);
-
-            if (!selector) {
-                continue;
-            }
-
-            NSString *selectorName =
-                NSStringFromSelector(selector);
-
-            if ([seen containsObject:selectorName]) {
-                continue;
-            }
-
-            [seen addObject:selectorName];
-
-            const char *encoding =
-                method_getTypeEncoding(method);
-
-            AVX512MethodInfo *methodInfo =
-                [AVX512MethodInfo new];
-
-            methodInfo.selectorName =
-                selectorName;
-
-            methodInfo.typeEncoding =
-                encoding
-                ? [NSString stringWithUTF8String:encoding]
-                : @"";
-
-            methodInfo.returnType =
-                AVX512HumanType(encoding);
-
-            methodInfo.argumentCount =
-                AVX512ExplicitArgumentCount(method);
-
-            methodInfo.inherited =
-                inherited;
-
-            methodInfo.implementation =
-                method_getImplementation(method);
-
-            methodInfo.implementationAddress =
-                (uintptr_t)methodInfo.implementation;
-
-            uintptr_t slide = 0;
-            uintptr_t offset = 0;
-
-            methodInfo.imageName =
-                AVX512ImageForAddress(
-                    methodInfo.implementationAddress,
-                    &slide,
-                    &offset);
-
-            methodInfo.imageOffset =
-                offset;
-
-            [methods addObject:methodInfo];
+            free(list);
         }
 
-        free(list);
-
         inherited = YES;
-        current = class_getSuperclass(current);
+
+        current =
+            class_getSuperclass(current);
     }
 
     [methods sortUsingComparator:
@@ -994,7 +1151,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
                          AVX512MethodInfo *b) {
 
         return [a.selectorName
-                localizedCaseInsensitiveCompare:b.selectorName];
+                localizedCaseInsensitiveCompare:
+                b.selectorName];
     }];
 
     info.methods = methods;
@@ -1004,7 +1162,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 #pragma mark - Table
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
+- (NSInteger)numberOfSectionsInTableView:
+    (UITableView *)tableView
 {
     return 1;
 }
@@ -1015,8 +1174,10 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     return self.filteredClasses.count;
 }
 
-- (UITableViewCell *)tableView:(UITableView *)tableView
-         cellForRowAtIndexPath:(NSIndexPath *)indexPath
+- (UITableViewCell *)tableView:
+    (UITableView *)tableView
+    cellForRowAtIndexPath:
+    (NSIndexPath *)indexPath
 {
     UITableViewCell *cell =
         [[UITableViewCell alloc]
@@ -1036,7 +1197,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          (unsigned long)info.methods.count];
 
     cell.accessoryType =
-        [self.selectedClasses containsObject:info.className]
+        [self.selectedClasses
+         containsObject:info.className]
         ? UITableViewCellAccessoryCheckmark
         : UITableViewCellAccessoryDisclosureIndicator;
 
@@ -1044,28 +1206,38 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 }
 
 - (void)tableView:(UITableView *)tableView
- didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+ didSelectRowAtIndexPath:
+    (NSIndexPath *)indexPath
 {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    [tableView deselectRowAtIndexPath:indexPath
+                             animated:YES];
 
     AVX512ClassInfo *info =
         self.filteredClasses[indexPath.row];
 
-    if ([self.selectedClasses containsObject:info.className]) {
-        [self.selectedClasses removeObject:info.className];
+    if ([self.selectedClasses
+         containsObject:info.className]) {
+
+        [self.selectedClasses
+         removeObject:info.className];
+
     } else {
-        [self.selectedClasses addObject:info.className];
+
+        [self.selectedClasses
+         addObject:info.className];
     }
 
     [tableView reloadRowsAtIndexPaths:@[indexPath]
-                     withRowAnimation:UITableViewRowAnimationAutomatic];
+                     withRowAnimation:
+                     UITableViewRowAnimationAutomatic];
 
     [self showClassInspector:info];
 }
 
 #pragma mark - Class Inspector
 
-- (void)showClassInspector:(AVX512ClassInfo *)info
+- (void)showClassInspector:
+    (AVX512ClassInfo *)info
 {
     AVX512ClassInspectorController *inspector =
         [[AVX512ClassInspectorController alloc]
@@ -1087,20 +1259,49 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 - (void)makeDylib
 {
+    if (self.loadingRuntimeClasses) {
+
+        UIAlertController *alert =
+            [UIAlertController
+             alertControllerWithTitle:
+             @"Runtime Still Loading"
+             message:
+             @"AVX512 is still collecting runtime metadata. "
+             @"Please wait for the class list to finish loading."
+             preferredStyle:
+             UIAlertControllerStyleAlert];
+
+        [alert addAction:
+         [UIAlertAction actionWithTitle:@"OK"
+                                  style:
+                                  UIAlertActionStyleDefault
+                                handler:nil]];
+
+        [self presentViewController:alert
+                           animated:YES
+                         completion:nil];
+
+        return;
+    }
+
     if (self.selectedClasses.count == 0) {
 
         UIAlertController *alert =
             [UIAlertController
-             alertControllerWithTitle:@"No Classes Selected"
+             alertControllerWithTitle:
+             @"No Classes Selected"
              message:
              @"Select at least one class first. "
              @"You can inspect its methods and then generate "
-             @"a runtime diagnostic or controlled test-harness project."
-             preferredStyle:UIAlertControllerStyleAlert];
+             @"a runtime diagnostic or controlled test-harness "
+             @"project."
+             preferredStyle:
+             UIAlertControllerStyleAlert];
 
         [alert addAction:
          [UIAlertAction actionWithTitle:@"OK"
-                                  style:UIAlertActionStyleDefault
+                                  style:
+                                  UIAlertActionStyleDefault
                                 handler:nil]];
 
         [self presentViewController:alert
@@ -1116,44 +1317,55 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          message:
          [NSString stringWithFormat:
           @"%lu class%@ selected.",
-          (unsigned long)self.selectedClasses.count,
-          self.selectedClasses.count == 1 ? @"" : @"es"]
-         preferredStyle:UIAlertControllerStyleActionSheet];
+          (unsigned long)
+          self.selectedClasses.count,
+          self.selectedClasses.count == 1
+          ? @""
+          : @"es"]
+         preferredStyle:
+         UIAlertControllerStyleActionSheet];
 
     [config addAction:
-     [UIAlertAction actionWithTitle:@"Runtime Diagnostic"
-                              style:UIAlertActionStyleDefault
-                            handler:^(__unused UIAlertAction *action) {
+     [UIAlertAction
+      actionWithTitle:@"Runtime Diagnostic"
+      style:UIAlertActionStyleDefault
+      handler:^(__unused UIAlertAction *action) {
 
         [self generateProject:
          AVX512DylibTypeDiagnostic
-               buildStyle:AVX512BuildStyleShell];
+         buildStyle:
+         AVX512BuildStyleShell];
     }]];
 
     [config addAction:
-     [UIAlertAction actionWithTitle:@"Runtime Test Harness"
-                              style:UIAlertActionStyleDefault
-                            handler:^(__unused UIAlertAction *action) {
+     [UIAlertAction
+      actionWithTitle:@"Runtime Test Harness"
+      style:UIAlertActionStyleDefault
+      handler:^(__unused UIAlertAction *action) {
 
         [self generateProject:
          AVX512DylibTypeTestHarness
-               buildStyle:AVX512BuildStyleShell];
+         buildStyle:
+         AVX512BuildStyleShell];
     }]];
 
     [config addAction:
-     [UIAlertAction actionWithTitle:@"GitHub Actions Test Harness"
-                              style:UIAlertActionStyleDefault
-                            handler:^(__unused UIAlertAction *action) {
+     [UIAlertAction
+      actionWithTitle:@"GitHub Actions Test Harness"
+      style:UIAlertActionStyleDefault
+      handler:^(__unused UIAlertAction *action) {
 
         [self generateProject:
          AVX512DylibTypeTestHarness
-               buildStyle:AVX512BuildStyleGitHubActions];
+         buildStyle:
+         AVX512BuildStyleGitHubActions];
     }]];
 
     [config addAction:
-     [UIAlertAction actionWithTitle:@"Cancel"
-                              style:UIAlertActionStyleCancel
-                            handler:nil]];
+     [UIAlertAction
+      actionWithTitle:@"Cancel"
+      style:UIAlertActionStyleCancel
+      handler:nil]];
 
     UIPopoverPresentationController *popover =
         config.popoverPresentationController;
@@ -1168,9 +1380,25 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
 #pragma mark - Project Generation
 
-- (void)generateProject:(AVX512DylibType)dylibType
-             buildStyle:(AVX512BuildStyle)buildStyle
+- (void)generateProject:
+    (AVX512DylibType)dylibType
+    buildStyle:
+    (AVX512BuildStyle)buildStyle
 {
+    /*
+     * Snapshot the selection before generating files.
+     * This prevents later UI changes from changing the generated
+     * project while generation is in progress.
+     */
+    NSArray<NSString *> *selected =
+        [self.selectedClasses.allObjects
+         sortedArrayUsingSelector:
+         @selector(localizedCaseInsensitiveCompare:)];
+
+    if (selected.count == 0) {
+        return;
+    }
+
     NSString *directory =
         [NSTemporaryDirectory()
          stringByAppendingPathComponent:
@@ -1195,7 +1423,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
         [self generatedHeader];
 
     NSString *implementation =
-        [self generatedImplementation:dylibType];
+        [self generatedImplementation:dylibType
+                         selectedClasses:selected];
 
     NSString *readme =
         [self generatedREADME:dylibType
@@ -1255,7 +1484,8 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
     [files addObject:
      [NSURL fileURLWithPath:readmePath]];
 
-    if (buildStyle == AVX512BuildStyleShell) {
+    if (buildStyle ==
+        AVX512BuildStyleShell) {
 
         NSString *build =
             [self generatedBuildScript];
@@ -1336,13 +1566,16 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
      "//\n\n"
      "#import <Foundation/Foundation.h>\n"
      "#import <objc/runtime.h>\n\n"
-     "FOUNDATION_EXPORT void AVX512PrintSelectedRuntimeMetadata(void);\n";
+     "FOUNDATION_EXPORT void "
+     "AVX512PrintSelectedRuntimeMetadata(void);\n";
 }
 
 #pragma mark - Generated Implementation
 
 - (NSString *)generatedImplementation:
     (AVX512DylibType)dylibType
+    selectedClasses:
+    (NSArray<NSString *> *)selectedClasses
 {
     NSMutableString *source =
         [NSMutableString string];
@@ -1354,25 +1587,41 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
       "//\n\n"
       "#import \"AVX512Hook.h\"\n"
       "#import <objc/runtime.h>\n"
-      "#import <stdio.h>\n\n"];
+      "#import <stdio.h>\n"
+      "#import <stdint.h>\n"
+      "#import <stdatomic.h>\n\n"];
+
+    [source appendString:
+     @"static atomic_flag "
+      "AVX512MetadataRunning = ATOMIC_FLAG_INIT;\n\n"];
 
     [source appendString:
      @"static void AVX512PrintClass(Class cls)\n"
       "{\n"
       "    if (!cls) return;\n\n"
       "    const char *name = class_getName(cls);\n"
-      "    const char *superName = class_getName(class_getSuperclass(cls));\n\n"
-      "    printf(\"[AVX512] CLASS %s\\\\n\", name ? name : \"<unknown>\");\n"
-      "    printf(\"[AVX512] SUPER %s\\\\n\", superName ? superName : \"<none>\");\n\n"
+      "    const char *superName = "
+      "class_getName(class_getSuperclass(cls));\n\n"
+      "    printf(\"[AVX512] CLASS %s\\\\n\", "
+      "name ? name : \"<unknown>\");\n"
+      "    printf(\"[AVX512] SUPER %s\\\\n\", "
+      "superName ? superName : \"<none>\");\n\n"
       "    unsigned int count = 0;\n"
       "    Method *methods = class_copyMethodList(cls, &count);\n\n"
+      "    if (!methods) {\n"
+      "        printf(\"[AVX512] METHODS 0\\\\n\");\n"
+      "        return;\n"
+      "    }\n\n"
+      "    printf(\"[AVX512] METHODS %u\\\\n\", count);\n\n"
       "    for (unsigned int i = 0; i < count; i++) {\n"
       "        Method method = methods[i];\n"
       "        SEL selector = method_getName(method);\n"
-      "        const char *encoding = method_getTypeEncoding(method);\n"
+      "        const char *encoding = "
+      "method_getTypeEncoding(method);\n"
       "        IMP imp = method_getImplementation(method);\n\n"
       "        printf(\"[AVX512] METHOD %s\\\\n\",\n"
-      "               selector ? sel_getName(selector) : \"<unknown>\");\n"
+      "               selector ? sel_getName(selector) : "
+      "\"<unknown>\");\n"
       "        printf(\"[AVX512] IMP 0x%llX\\\\n\",\n"
       "               (unsigned long long)(uintptr_t)imp);\n"
       "        printf(\"[AVX512] ENCODING %s\\\\n\",\n"
@@ -1383,53 +1632,76 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 
     [source appendString:
      @"void AVX512PrintSelectedRuntimeMetadata(void)\n"
-      "{\n"];
+      "{\n"
+      "    /*\n"
+      "     * Explicit invocation only.\n"
+      "     *\n"
+      "     * This used to be called from a Mach-O constructor.\n"
+      "     * Constructors run while the image is loading, which means\n"
+      "     * a large runtime scan can stall the host before it has\n"
+      "     * finished loading the dylib.\n"
+      "     *\n"
+      "     * The function remains exported so the host/test harness\n"
+      "     * can request diagnostics deliberately.\n"
+      "     */\n\n"
+      "    if (atomic_flag_test_and_set(&AVX512MetadataRunning)) {\n"
+      "        printf(\"[AVX512] Metadata scan already running.\\\\n\");\n"
+      "        return;\n"
+      "    }\n\n"];
 
-    NSArray<NSString *> *selected =
-        [self.selectedClasses.allObjects
-         sortedArrayUsingSelector:
-         @selector(localizedCaseInsensitiveCompare:)];
-
-    for (NSString *className in selected) {
+    for (NSString *className in selectedClasses) {
 
         NSString *escaped =
-            [className stringByReplacingOccurrencesOfString:@"\\"
-                                                  withString:@"\\\\"];
+            [className
+             stringByReplacingOccurrencesOfString:@"\\"
+             withString:@"\\\\"];
 
         escaped =
-            [escaped stringByReplacingOccurrencesOfString:@"\""
-                                                withString:@"\\\""];
+            [escaped
+             stringByReplacingOccurrencesOfString:@"\""
+             withString:@"\\\""];
 
         [source appendFormat:
-         @"    AVX512PrintClass(NSClassFromString(@\"%@\"));\n",
+         @"    AVX512PrintClass("
+          "NSClassFromString(@\"%@\"));\n",
          escaped];
     }
 
     NSString *mode =
-        dylibType == AVX512DylibTypeTestHarness
+        dylibType ==
+        AVX512DylibTypeTestHarness
         ? @"Runtime Test Harness"
         : @"Runtime Diagnostic";
 
     [source appendFormat:
      @"\n"
       "    printf(\"[AVX512] MODE: %@\\\\n\");\n"
+      "    atomic_flag_clear(&AVX512MetadataRunning);\n"
       "}\n\n",
      mode];
 
+    /*
+     * Deliberately no __attribute__((constructor)).
+     *
+     * Loading the generated dylib must not automatically trigger
+     * the complete Objective-C runtime enumeration.
+     */
     [source appendString:
-     @"__attribute__((constructor))\n"
-      "static void AVX512Initialize(void)\n"
-      "{\n"
-      "    AVX512PrintSelectedRuntimeMetadata();\n"
-      "}\n"];
+     @"/*\n"
+      " * AVX512 intentionally does not install a constructor here.\n"
+      " * Call AVX512PrintSelectedRuntimeMetadata() explicitly from\n"
+      " * the controlled diagnostic/test harness when desired.\n"
+      " */\n"];
 
     return source;
 }
 
 #pragma mark - README
 
-- (NSString *)generatedREADME:(AVX512DylibType)dylibType
-                   buildStyle:(AVX512BuildStyle)buildStyle
+- (NSString *)generatedREADME:
+    (AVX512DylibType)dylibType
+    buildStyle:
+    (AVX512BuildStyle)buildStyle
 {
     NSMutableString *readme =
         [NSMutableString string];
@@ -1439,12 +1711,14 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
       "Generated by **AVX512 / DELvEK.NET**.\n\n"];
 
     [readme appendString:
-     dylibType == AVX512DylibTypeTestHarness
+     dylibType ==
+     AVX512DylibTypeTestHarness
      ? @"Mode: **Runtime Test Harness**\n\n"
      : @"Mode: **Runtime Diagnostic**\n\n"];
 
     [readme appendString:
-     buildStyle == AVX512BuildStyleGitHubActions
+     buildStyle ==
+     AVX512BuildStyleGitHubActions
      ? @"Build: **GitHub Actions**\n\n"
      : @"Build: **Shell Script**\n\n"];
 
@@ -1457,7 +1731,9 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
          @selector(localizedCaseInsensitiveCompare:)];
 
     for (NSString *name in selected) {
-        [readme appendFormat:@"- `%@`\n", name];
+        [readme appendFormat:
+         @"- `%@`\n",
+         name];
     }
 
     [readme appendString:
@@ -1467,6 +1743,11 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
       "runtime method metadata.\n\n"
       "The implementation-learning view is designed to connect "
       "Objective-C runtime metadata with ARM64/Mach-O analysis.\n\n"
+      "## Runtime loading behavior\n\n"
+      "The generated diagnostic dylib does not perform its full "
+      "metadata enumeration from a Mach-O constructor. The exported "
+      "metadata function is invoked explicitly by the host/test "
+      "harness so image loading remains lightweight.\n\n"
       "## NOP test patches\n\n"
       "A NOP action represents a proposed replacement for a selected "
       "instruction in a controlled test environment. The generator "
@@ -1491,7 +1772,6 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
      "SDK=\"$(xcrun --sdk iphoneos --show-sdk-path)\"\n"
      "CLANG=\"$(xcrun --sdk iphoneos -f clang)\"\n\n"
      "mkdir -p build\n\n"
-     "COMMON=\"\"\n\n"
      "build_slice() {\n"
      "    ARCH=\"$1\"\n"
      "    \"$CLANG\" \\\n"
@@ -1544,6 +1824,7 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
      "        run: brew install ldid\n\n"
      "      - name: Build arm64\n"
      "        run: |\n"
+     "          set -e\n"
      "          SDK=\"$(xcrun --sdk iphoneos --show-sdk-path)\"\n"
      "          CLANG=\"$(xcrun --sdk iphoneos -f clang)\"\n"
      "          mkdir -p build\n"
@@ -1561,6 +1842,7 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
      "            -o build/AVX512-arm64.dylib\n\n"
      "      - name: Build arm64e\n"
      "        run: |\n"
+     "          set -e\n"
      "          SDK=\"$(xcrun --sdk iphoneos --show-sdk-path)\"\n"
      "          CLANG=\"$(xcrun --sdk iphoneos -f clang)\"\n"
      "          \"$CLANG\" \\\n"
@@ -1577,6 +1859,7 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
      "            -o build/AVX512-arm64e.dylib\n\n"
      "      - name: Create universal dylib\n"
      "        run: |\n"
+     "          set -e\n"
      "          lipo -create \\\n"
      "            build/AVX512-arm64.dylib \\\n"
      "            build/AVX512-arm64e.dylib \\\n"
@@ -1596,7 +1879,6 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
      "          path: |\n"
      "            build/AVX512-arm64.dylib\n"
      "            build/AVX512-arm64e.dylib\n";
-
 }
 
 #pragma mark - Close
@@ -1613,13 +1895,16 @@ static NSString *AVX512InstructionExplanation(NSString *mnemonic,
 {
     UIAlertController *alert =
         [UIAlertController
-         alertControllerWithTitle:@"AVX512 Generator Error"
+         alertControllerWithTitle:
+         @"AVX512 Generator Error"
          message:error.localizedDescription
-         preferredStyle:UIAlertControllerStyleAlert];
+         preferredStyle:
+         UIAlertControllerStyleAlert];
 
     [alert addAction:
      [UIAlertAction actionWithTitle:@"OK"
-                              style:UIAlertActionStyleDefault
+                              style:
+                              UIAlertActionStyleDefault
                             handler:nil]];
 
     [self presentViewController:alert
