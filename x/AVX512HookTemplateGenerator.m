@@ -370,7 +370,7 @@ titleForHeaderInSection:(NSInteger)section
                 forState:UIControlStateNormal];
     }
 
-    [button setTitle:@"  Signature.zh · MrZEfv"
+    [button setTitle:@"  Signature.zh | MrZEfv"
             forState:UIControlStateNormal];
 
     button.titleLabel.font =
