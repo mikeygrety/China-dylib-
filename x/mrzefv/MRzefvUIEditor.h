@@ -38,8 +38,7 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 
 @property (nonatomic, copy) NSString *format;
 @property (nonatomic) NSUInteger version;
-
-@property (nonatomic, copy) NSArray<MRzefvUIChange *> *changes;
+@property (nonatomic, strong) NSMutableArray<MRzefvUIChange *> *changes;
 
 - (void)addChange:(MRzefvUIChange *)change;
 - (void)removeChange:(MRzefvUIChange *)change;
