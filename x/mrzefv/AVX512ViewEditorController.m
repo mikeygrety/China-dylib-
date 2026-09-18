@@ -8,9 +8,10 @@
 //
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import "AVX512GeneratedProject.h"
 #pragma mark - Operation Model
 typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
-    AVX512EditOperationMove,
+    AVX512EditOperationMove = 0,
     AVX512EditOperationResize,
     AVX512EditOperationReplaceText,
     AVX512EditOperationAddText,
@@ -45,6 +46,7 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
 @end
 #pragma mark - Implementation
 @implementation AVX512ViewEditorController
+#pragma mark - Initialization
 - (instancetype)initWithTargetView:(UIView *)view
 {
     self = [super initWithNibName:nil bundle:nil];
@@ -92,7 +94,8 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                 self.titleLabel,
                 self.classLabel
             ]];
-    header.axis = UILayoutConstraintAxisVertical;
+    header.axis =
+        UILayoutConstraintAxisVertical;
     header.spacing = 4.0;
     self.scrollView =
         [[UIScrollView alloc] init];
@@ -129,7 +132,8 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                 header,
                 self.scrollView
             ]];
-    root.axis = UILayoutConstraintAxisVertical;
+    root.axis =
+        UILayoutConstraintAxisVertical;
     root.spacing = 12.0;
     root.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:root];
@@ -147,6 +151,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
             constraintEqualToAnchor:
                 self.view.trailingAnchor]
     ]];
+    /*
+     * Visibility
+     */
     [self addSectionTitle:@"Visibility"];
     self.hiddenSwitch =
         [[UISwitch alloc] init];
@@ -158,6 +165,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
  forControlEvents:UIControlEventValueChanged];
     [self addRowWithTitle:@"Hidden"
                    control:self.hiddenSwitch];
+    /*
+     * Geometry
+     */
     [self addSectionTitle:@"Geometry"];
     self.moveButton =
         [self actionButton:@"Move"];
@@ -173,6 +183,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
            action:@selector(resizeTapped:)
  forControlEvents:UIControlEventTouchUpInside];
     [self addButton:self.resizeButton];
+    /*
+     * Content
+     */
     [self addSectionTitle:@"Content"];
     self.textButton =
         [self actionButton:@"Replace Text"];
@@ -195,6 +208,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
            action:@selector(imageTapped:)
  forControlEvents:UIControlEventTouchUpInside];
     [self addButton:self.imageButton];
+    /*
+     * Build
+     */
     [self addSectionTitle:@"Build"];
     self.previewButton =
         [self actionButton:@"Preview"];
@@ -226,8 +242,22 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
 }
 - (void)addButton:(UIButton *)button
 {
-    button.heightAnchor.constraintGreaterThanOrEqualToConstant:
-        46.0].active = YES;
+    /*
+     * FIX:
+     *
+     * The old code was missing the opening '[' and therefore
+     * produced:
+     *
+     * expected expression
+     * expected ';'
+     *
+     * Correct Objective-C syntax:
+     *
+     * [button.heightAnchor
+     *     constraintGreaterThanOrEqualToConstant:46.0].active = YES;
+     */
+    [button.heightAnchor
+        constraintGreaterThanOrEqualToConstant:46.0].active = YES;
     [self.stackView addArrangedSubview:button];
 }
 - (UIButton *)actionButton:(NSString *)title
@@ -339,6 +369,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                       style:UIAlertActionStyleDefault
                     handler:^(UIAlertAction *action) {
         __strong typeof(weakSelf) self = weakSelf;
+        if (!self) {
+            return;
+        }
         CGFloat x =
             [alert.textFields[0].text doubleValue];
         CGFloat y =
@@ -347,7 +380,8 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
             self.targetView.frame;
         frame.origin =
             CGPointMake(x, y);
-        self.targetView.frame = frame;
+        self.targetView.frame =
+            frame;
         [self recordOperation:
             AVX512EditOperationMove
                         values:@{
@@ -399,6 +433,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                       style:UIAlertActionStyleDefault
                     handler:^(UIAlertAction *action) {
         __strong typeof(weakSelf) self = weakSelf;
+        if (!self) {
+            return;
+        }
         CGFloat width =
             [alert.textFields[0].text doubleValue];
         CGFloat height =
@@ -410,7 +447,8 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
             self.targetView.bounds;
         bounds.size =
             CGSizeMake(width, height);
-        self.targetView.bounds = bounds;
+        self.targetView.bounds =
+            bounds;
         [self recordOperation:
             AVX512EditOperationResize
                         values:@{
@@ -463,6 +501,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                       style:UIAlertActionStyleDefault
                     handler:^(UIAlertAction *action) {
         __strong typeof(weakSelf) self = weakSelf;
+        if (!self) {
+            return;
+        }
         NSString *text =
             alert.textFields.firstObject.text ?: @"";
         if (addText) {
@@ -470,7 +511,8 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                 [[UILabel alloc]
                     initWithFrame:
                         CGRectMake(0, 0, 160, 40)];
-            label.text = text;
+            label.text =
+                text;
             label.textColor =
                 [UIColor labelColor];
             [self.targetView addSubview:label];
@@ -480,12 +522,11 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
                 @"text": text
             }];
         } else {
-            if ([self.targetView
+            if (![self.targetView
                     respondsToSelector:@selector(setText:)]) {
-                [(id)self.targetView setText:text];
-            } else {
                 return;
             }
+            [(id)self.targetView setText:text];
             [self recordOperation:
                 AVX512EditOperationReplaceText
                             values:@{
@@ -500,6 +541,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
 }
 - (NSString *)textValueForView:(UIView *)view
 {
+    if (!view) {
+        return @"";
+    }
     if ([view respondsToSelector:@selector(text)]) {
         id value =
             [(id)view text];
@@ -516,9 +560,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
         return;
     }
     /*
-     The actual image picker/resource importer will be connected
-     here. For now the operation is represented explicitly so the
-     generated manifest has a stable operation type.
+     * Resource picker can be connected here later.
+     *
+     * For now we record a stable resource placeholder.
      */
     UIAlertController *alert =
         [UIAlertController
@@ -570,6 +614,9 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
 #pragma mark - Generate
 - (void)generateTapped:(UIButton *)sender
 {
+    if (!self.targetView) {
+        return;
+    }
     if (self.operations.count == 0) {
         UIAlertController *alert =
             [UIAlertController
@@ -588,31 +635,65 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
         return;
     }
     /*
-     The next build-generation layer consumes self.operations
-     and produces:
-       Sources/MRzefvGenerated.h
-       Sources/MRzefvGenerated.m
-       manifest.json
-       build.sh
-       workflow
-     The editor itself does not compile or sign anything.
+     * Generate the complete standalone project.
+     *
+     * AVX512GeneratedProject creates:
+     *
+     *   Sources/MRzefvGenerated.h
+     *   Sources/MRzefvGenerated.m
+     *   manifest.json
+     *   generation-receipt.json
+     *   build.sh
+     *   .github/workflows/build-mrzefv-generated.yml
+     *
+     * It also creates ONE canonical session UUID which is reused
+     * by every generated artifact.
      */
-    NSDictionary *summary = @{
-        @"class":
-            NSStringFromClass(object_getClass(self.targetView)) ?: @"UIView",
-        @"operationCount":
-            @(self.operations.count)
-    };
-    NSLog(@"[AVX512] Generate requested: %@", summary);
+    NSError *error = nil;
+    NSURL *projectURL =
+        [AVX512GeneratedProject
+            generateProjectWithTargetView:self.targetView
+                               operations:self.operations
+                                    error:&error];
+    if (!projectURL) {
+        NSString *message =
+            error.localizedDescription.length
+                ? error.localizedDescription
+                : @"Unable to generate the MRzefv project.";
+        UIAlertController *alert =
+            [UIAlertController
+                alertControllerWithTitle:@"Generation Failed"
+                                 message:message
+                          preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:
+            [UIAlertAction
+                actionWithTitle:@"OK"
+                          style:UIAlertActionStyleDefault
+                        handler:nil]];
+        [self presentViewController:alert
+                           animated:YES
+                         completion:nil];
+        return;
+    }
+    NSLog(@"[AVX512] Generated project: %@",
+          projectURL.path);
+    /*
+     * For now this reports the generated project location.
+     *
+     * The next layer can push this directory to GitHub and monitor
+     * the Actions run.
+     */
     UIAlertController *alert =
         [UIAlertController
-            alertControllerWithTitle:@"Generate MRzefv Dylib"
+            alertControllerWithTitle:@"Project Generated"
                              message:
-                @"The recorded operations are ready for the generated build package."
+                [NSString stringWithFormat:
+                    @"MRzefv generated project is ready.\n\n%@",
+                    projectURL.path]
                       preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:
         [UIAlertAction
-            actionWithTitle:@"Continue"
+            actionWithTitle:@"Done"
                       style:UIAlertActionStyleDefault
                     handler:nil]];
     [self presentViewController:alert
@@ -628,10 +709,13 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
     }
     AVX512EditOperation *operation =
         [[AVX512EditOperation alloc] init];
-    operation.type = type;
+    operation.type =
+        type;
+    /*
+     * Keep the class name associated with the actual selected object.
+     */
     operation.className =
-        NSStringFromClass(
-            object_getClass(self.targetView));
+        NSStringFromClass([self.targetView class]);
     operation.viewPath =
         [self viewPathForView:self.targetView];
     operation.values =
@@ -649,28 +733,40 @@ typedef NS_ENUM(NSInteger, AVX512EditOperationType) {
     }
     NSMutableArray<NSString *> *components =
         [NSMutableArray array];
-    UIView *current = view;
+    UIView *current =
+        view;
     while (current) {
         UIView *superview =
             current.superview;
         NSUInteger index = 0;
         if (superview) {
-            index =
-                [superview.subviews indexOfObjectIdenticalTo:current];
+            NSUInteger foundIndex =
+                [superview.subviews
+                    indexOfObjectIdenticalTo:current];
+            if (foundIndex != NSNotFound) {
+                index = foundIndex;
+            }
+        }
+        NSString *className =
+            NSStringFromClass([current class]);
+        if (className.length == 0) {
+            className = @"UIView";
         }
         NSString *component =
             [NSString stringWithFormat:
                 @"%@[%lu]",
-                NSStringFromClass(
-                    object_getClass(current)),
+                className,
                 (unsigned long)index];
         [components insertObject:component
                          atIndex:0];
-        current = superview;
+        current =
+            superview;
         if (components.count > 100) {
             break;
         }
     }
-    return [components componentsJoinedByString:@"/"];
+    return
+        [components
+            componentsJoinedByString:@"/"];
 }
 @end
