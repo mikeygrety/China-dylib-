@@ -9,7 +9,10 @@
 #import "FLEXExplorerToolbar.h"
 
 @class AVX512Window;
+
 @protocol AVX512ExplorerViewControllerDelegate;
+
+FOUNDATION_EXPORT NSNotificationName const AVX512ExplorerSelectedViewDidChangeNotification;
 
 /// A view controller that manages the FLEX toolbar.
 @interface AVX512ExplorerViewController : UIViewController
@@ -18,6 +21,9 @@
 @property (nonatomic, readonly) BOOL wantsWindowToBecomeKey;
 
 @property (nonatomic, readonly) AVX512ExplorerToolbar *explorerToolbar;
+
+/// The view currently selected by the existing AVX512/FLEX Select tool.
+@property (nonatomic, readonly, nullable) UIView *selectedView;
 
 - (BOOL)shouldReceiveTouchAtWindowPoint:(CGPoint)pointInWindowCoordinates;
 
@@ -32,30 +38,25 @@
 /// @brief Used to present (or dismiss) a modal view controller ("tool"),
 /// typically triggered by pressing a button in the toolbar.
 ///
-/// If a tool is already presented, this method dismisses it and presents the given tool.
+/// If a tool is already presented, this method simply dismisses the tool and presents the given tool.
 /// The completion block is called once the tool has been presented.
 - (void)presentTool:(UINavigationController *(^)(void))future
          completion:(void (^)(void))completion;
 
 // Keyboard shortcut helpers
-
 - (void)toggleSelectTool;
 - (void)toggleMoveTool;
 - (void)toggleViewsTool;
 - (void)toggleMenuTool;
-
-/// @return YES if the explorer used the key press to perform an action, NO otherwise
 - (BOOL)handleDownArrowKeyPressed;
-/// @return YES if the explorer used the key press to perform an action, NO otherwise
 - (BOOL)handleUpArrowKeyPressed;
-/// @return YES if the explorer used the key press to perform an action, NO otherwise
 - (BOOL)handleRightArrowKeyPressed;
-/// @return YES if the explorer used the key press to perform an action, NO otherwise
 - (BOOL)handleLeftArrowKeyPressed;
 
 @end
 
-#pragma mark -
 @protocol AVX512ExplorerViewControllerDelegate <NSObject>
+
 - (void)explorerViewControllerDidFinish:(AVX512ExplorerViewController *)explorerViewController;
+
 @end
