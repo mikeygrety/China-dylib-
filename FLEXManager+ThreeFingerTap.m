@@ -2,8 +2,9 @@
 #import “FLEXManager.h”
 #import “UIGestureRecognizer+Blocks.h”
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 
-static UILongPressGestureRecognizer *avx512_threeFingerGesture = nil;
+static UILongPressGestureRecognizer *avx512_threeFingerLongPressGesture = nil;
 
 @implementation AVX512Manager (ThreeFingerTap)
 
@@ -19,12 +20,6 @@ static UILongPressGestureRecognizer *avx512_threeFingerGesture = nil;
     }
 * (void)avx512_setupGesture
     {
-    if (![NSThread isMainThread]) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-    [self avx512_setupGesture];
-    });
-    return;
-    }
     UIWindow *targetWindow = [self avx512_findTargetWindow];
     if (!targetWindow) {
     dispatch_after(
@@ -37,119 +32,152 @@ static UILongPressGestureRecognizer *avx512_threeFingerGesture = nil;
     [self avx512_setupGesture];
     }
     );
-
-  return;
-
-    }
-    if (avx512_threeFingerGesture &&
-    avx512_threeFingerGesture.view == targetWindow) {
     return;
     }
-    if (avx512_threeFingerGesture.view) {
-    [avx512_threeFingerGesture.view
-    removeGestureRecognizer:avx512_threeFingerGesture];
-    }
-    if (!avx512_threeFingerGesture) {
+    /*
+    * If our gesture is already attached to the correct
+    * application window, nothing else is required.
+        */
+        if (avx512_threeFingerLongPressGesture &&
+        avx512_threeFingerLongPressGesture.view == targetWindow) {
+        return;
+        }
+    /*
+    * Remove the existing gesture from a previous window.
+        */
+        if (avx512_threeFingerLongPressGesture.view) {
+        [avx512_threeFingerLongPressGesture.view
+        removeGestureRecognizer:
+        avx512_threeFingerLongPressGesture];
+        avx512_threeFingerLongPressGesture = nil;
+        }
+    /*
+    * Create the original AVX512 three-finger gesture.
+        */
+        if (!avx512_threeFingerLongPressGesture) {
+        avx512_threeFingerLongPressGesture =
+        [UILongPressGestureRecognizer
+        avx512_action:
+        ^(UIGestureRecognizer *gesture) {
 
-  avx512_threeFingerGesture =
-      [UILongPressGestureRecognizer
-          avx512_action:^(UIGestureRecognizer *gesture) {
-      if (gesture.state != UIGestureRecognizerStateBegan) {
-          return;
-      }
-      AVX512Manager *manager =
-          [AVX512Manager sharedManager];
-      if (!manager) {
-          NSLog(
-              @"[AVX512] Three-finger gesture detected, "
-              @"but sharedManager is unavailable."
-          );
-          return;
-      }
-      NSLog(
-          @"[AVX512] Three-finger tap -> toggleExplorer"
-      );
-      [manager toggleExplorer];
-  }];
-  avx512_threeFingerGesture.numberOfTouchesRequired = 3;
-  avx512_threeFingerGesture.minimumPressDuration = 0.05;
-  avx512_threeFingerGesture.allowableMovement = 100.0;
-  avx512_threeFingerGesture.cancelsTouchesInView = NO;
-  avx512_threeFingerGesture.delaysTouchesBegan = NO;
-  avx512_threeFingerGesture.delaysTouchesEnded = NO;
+ if (gesture.state != UIGestureRecognizerStateBegan) {
+     return;
+ }
+ AVX512Manager *manager =
+     [AVX512Manager sharedManager];
+ if (!manager) {
+     NSLog(
+         @"[AVX512] Three-finger gesture fired, "
+         @"but sharedManager is unavailable."
+     );
+     return;
+ }
+ NSLog(
+     @"[AVX512] Three-finger gesture -> toggleExplorer"
+ );
+ [manager toggleExplorer];
 
-    }
-    if (avx512_threeFingerGesture.view != targetWindow) {
-    [targetWindow addGestureRecognizer:avx512_threeFingerGesture];
-
-  NSLog(
-      @"[AVX512] Three-finger gesture installed on %@",
-      targetWindow
-  );
-
-    }
-    }
+        }];
+        /*
+        * Exactly three fingers.
+            */
+            avx512_threeFingerLongPressGesture.numberOfTouchesRequired = 3;
+            }
+    /*
+    * Attach the gesture to the real application window.
+        */
+        if (avx512_threeFingerLongPressGesture.view != targetWindow) {
+        [targetWindow
+        addGestureRecognizer:
+        avx512_threeFingerLongPressGesture];
+        NSLog(
+        @”[AVX512] Three-finger gesture installed on %@”,
+        targetWindow
+        );
+        }
+        }
 * (UIWindow *)avx512_findTargetWindow
     {
     UIWindow *applicationWindow = nil;
-    if (@available(iOS 13.0, *)) {
+    /*
+    * iOS 13+ scene-aware lookup.
+        */
+        if (@available(iOS 13.0, *)) {
+        for (UIScene *scene
+        in [UIApplication sharedApplication].connectedScenes) {
 
-  for (UIScene *scene
-       in [UIApplication sharedApplication].connectedScenes) {
-      if (scene.activationState !=
-          UISceneActivationStateForegroundActive) {
-          continue;
-      }
-      if (![scene isKindOfClass:[UIWindowScene class]]) {
-          continue;
-      }
-      UIWindowScene *windowScene =
-          (UIWindowScene *)scene;
-      for (UIWindow *window in windowScene.windows) {
-          NSString *className =
-              NSStringFromClass(window.class);
-          if (window.isKeyWindow &&
-              ![className isEqualToString:@"AVX512Window"]) {
-              applicationWindow = window;
-              break;
-          }
-      }
-      if (applicationWindow) {
-          break;
-      }
-      for (UIWindow *window in windowScene.windows) {
-          if (window.isKeyWindow) {
-              applicationWindow = window;
-              break;
-          }
-      }
-      if (applicationWindow) {
-          break;
-      }
-      for (UIWindow *window in windowScene.windows) {
-          NSString *className =
-              NSStringFromClass(window.class);
-          if (![className isEqualToString:@"AVX512Window"] &&
-              !window.isHidden &&
-              window.alpha > 0.0 &&
-              window.windowLevel == UIWindowLevelNormal) {
-              applicationWindow = window;
-              break;
-          }
-      }
-      if (applicationWindow) {
-          break;
-      }
-  }
+ if (scene.activationState !=
+     UISceneActivationStateForegroundActive) {
+     continue;
+ }
+ if (![scene isKindOfClass:[UIWindowScene class]]) {
+     continue;
+ }
+ UIWindowScene *windowScene =
+     (UIWindowScene *)scene;
+ /*
+  * First preference:
+  * key application window, excluding AVX512Window.
+  */
+ for (UIWindow *window in windowScene.windows) {
+     NSString *className =
+         NSStringFromClass(window.class);
+     if (window.isKeyWindow &&
+         ![className isEqualToString:@"AVX512Window"]) {
+         applicationWindow = window;
+         break;
+     }
+ }
+ if (applicationWindow) {
+     break;
+ }
+ /*
+  * Second preference:
+  * any key window.
+  */
+ for (UIWindow *window in windowScene.windows) {
+     if (window.isKeyWindow) {
+         applicationWindow = window;
+         break;
+     }
+ }
+ if (applicationWindow) {
+     break;
+ }
+ /*
+  * Third preference:
+  * visible normal-level application window.
+  */
+ for (UIWindow *window in windowScene.windows) {
+     NSString *className =
+         NSStringFromClass(window.class);
+     if (![className isEqualToString:@"AVX512Window"] &&
+         !window.isHidden &&
+         window.alpha > 0.0 &&
+         window.windowLevel == UIWindowLevelNormal) {
+         applicationWindow = window;
+         break;
+     }
+ }
+ if (applicationWindow) {
+     break;
+ }
 
-    }
-    if (!applicationWindow) {
+        }
+        }
+    /*
+    * Legacy fallback.
+        */
+        if (!applicationWindow) {
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored “-Wdeprecated-declarations”
 
     NSArray<UIWindow *> *windows =
         [UIApplication sharedApplication].windows;
+    /*
+     * Prefer a key window that is not AVX512Window.
+     */
     for (UIWindow *window in windows) {
         NSString *className =
             NSStringFromClass(window.class);
@@ -159,6 +187,9 @@ static UILongPressGestureRecognizer *avx512_threeFingerGesture = nil;
             break;
         }
     }
+    /*
+     * Find another visible application window.
+     */
     if (!applicationWindow) {
         for (UIWindow *window in windows) {
             NSString *className =
@@ -171,6 +202,9 @@ static UILongPressGestureRecognizer *avx512_threeFingerGesture = nil;
             }
         }
     }
+    /*
+     * Final legacy fallback.
+     */
     if (!applicationWindow) {
         applicationWindow =
             [UIApplication sharedApplication].keyWindow;
@@ -179,6 +213,10 @@ static UILongPressGestureRecognizer *avx512_threeFingerGesture = nil;
 #pragma clang diagnostic pop
 }
 
+/*
+ * If the selected window is AVX512Window, find the
+ * underlying application window instead.
+ */
 if (applicationWindow &&
     [NSStringFromClass(applicationWindow.class)
         isEqualToString:@"AVX512Window"]) {
