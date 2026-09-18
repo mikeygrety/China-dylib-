@@ -59,8 +59,8 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 /// Starts the existing AVX512/FLEX live-view selector.
 ///
 /// MRzefv temporarily hands selection control to the Explorer.
-/// Once the user selects a live UIView, the Explorer invokes the
-/// pending selection completion and MRzefv is presented again.
+/// The Explorer either returns a selected UIView or reports cancellation.
+/// The editor is then presented again in either case.
 - (void)beginViewSelection;
 
 - (void)beginPreview;
