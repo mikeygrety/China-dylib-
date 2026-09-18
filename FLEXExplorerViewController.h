@@ -25,29 +25,38 @@ FOUNDATION_EXPORT NSNotificationName const AVX512ExplorerSelectedViewDidChangeNo
 /// The view currently selected by the existing AVX512/FLEX Select tool.
 @property (nonatomic, readonly, nullable) UIView *selectedView;
 
+/// Returns YES when the explorer should receive a touch at the supplied
+/// window coordinate.
 - (BOOL)shouldReceiveTouchAtWindowPoint:(CGPoint)pointInWindowCoordinates;
 
-/// @brief Used to present (or dismiss) a modal view controller ("tool"),
-/// typically triggered by pressing a button in the toolbar.
+/// Used to present (or dismiss) a modal tool.
 ///
-/// If a tool is already presented, this method simply dismisses it and calls the completion block.
-/// If no tool is presented, @code future() @endcode is presented and the completion block is called.
+/// If a tool is already presented, this method dismisses it and calls
+/// the completion block. If no tool is presented, the supplied tool is
+/// presented and the completion block is called.
 - (void)toggleToolWithViewControllerProvider:(UINavigationController *(^)(void))future
                                   completion:(void (^)(void))completion;
 
-/// @brief Used to present (or dismiss) a modal view controller ("tool"),
-/// typically triggered by pressing a button in the toolbar.
+/// Presents the supplied tool, dismissing any currently presented tool.
 ///
-/// If a tool is already presented, this method simply dismisses the tool and presents the given tool.
-/// The completion block is called once the tool has been presented.
+/// The completion block is called after the supplied tool has been presented.
 - (void)presentTool:(UINavigationController *(^)(void))future
          completion:(void (^)(void))completion;
+
+/// Temporarily hands live-view selection back to the existing AVX512/FLEX
+/// Select tool.
+///
+/// The currently presented tool is dismissed, Select mode is activated,
+/// and the completion block is called when the user selects a real UIView
+/// through the existing explorer selection system.
+- (void)beginLiveViewSelectionWithCompletion:(void (^)(UIView *selectedView))completion;
 
 // Keyboard shortcut helpers
 - (void)toggleSelectTool;
 - (void)toggleMoveTool;
 - (void)toggleViewsTool;
 - (void)toggleMenuTool;
+
 - (BOOL)handleDownArrowKeyPressed;
 - (BOOL)handleUpArrowKeyPressed;
 - (BOOL)handleRightArrowKeyPressed;
