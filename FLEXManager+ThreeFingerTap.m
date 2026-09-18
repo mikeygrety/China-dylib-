@@ -1,8 +1,6 @@
 #import “FLEXManager+ThreeFingerTap.h”
 #import “FLEXManager.h”
-#import “UIGestureRecognizer+Blocks.h”
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
 
 #pragma mark - Gesture Storage
 
@@ -16,8 +14,7 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
     {
     /*
     * +load can execute before the application’s main window exists.
-    * Always install the gesture on the main thread and retry if the
-    * host application’s window has not been created yet.
+    * Install on the main thread and retry until the host window exists.
         */
         if ([NSThread isMainThread]) {
         [self avx512_setupGesture];
@@ -41,8 +38,7 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
     UIWindow *targetWindow = [self avx512_findTargetWindow];
     if (!targetWindow) {
     /*
-    * The host application may not have created its window yet.
-    * Retry shortly instead of permanently failing during +load.
+    * The application window may not exist yet.
     */
     dispatch_after(
     dispatch_time(
@@ -59,92 +55,93 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
 
     }
     /*
-    * If the existing gesture is already attached to the correct
-    * application window, there is nothing else to do.
+    * If the gesture already belongs to the current host window,
+    * everything is already configured.
         */
-        if (avx512_threeFingerTapGesture) {
-        if (avx512_threeFingerTapGesture.view == targetWindow) {
+        if (avx512_threeFingerTapGesture &&
+        avx512_threeFingerTapGesture.view == targetWindow) {
         return;
         }
-        /*
-        * The active application window changed.
-        * Move the recognizer to the new host window.
-            */
-            UIView *oldView = avx512_threeFingerTapGesture.view;
-        if (oldView) {
-        [oldView removeGestureRecognizer:
+    /*
+    * If the application switched windows, detach the old gesture.
+        */
+        if (avx512_threeFingerTapGesture.view) {
+        [avx512_threeFingerTapGesture.view
+        removeGestureRecognizer:
         avx512_threeFingerTapGesture];
         }
-        }
     /*
-    * Create the gesture once.
+    * Create the recognizer once.
         */
         if (!avx512_threeFingerTapGesture) {
-        __weak typeof(self) weakSelf = self;
         avx512_threeFingerTapGesture =
-        [UITapGestureRecognizer avx512_action:
-        ^(UIGestureRecognizer *gesture) {
-
- __strong typeof(weakSelf) strongSelf = weakSelf;
- if (!strongSelf) {
-     return;
- }
- if (gesture.state !=
-     UIGestureRecognizerStateEnded) {
-     return;
- }
- AVX512Manager *manager =
-     [AVX512Manager sharedManager];
- if (!manager) {
-     NSLog(
-         @"[AVX512] Three-finger tap detected, "
-         @"but AVX512Manager is unavailable."
-     );
-     return;
- }
- NSLog(
-     @"[AVX512] Three-finger tap → toggleExplorer"
- );
- /*
-  * This is the existing AVX512/FLEX explorer entry
-  * point. It preserves the existing menu and tools,
-  * including the runtime View/Select/Disassemble/Hook
-  * workflow.
-  */
- [manager toggleExplorer];
-
-        }];
-        avx512_threeFingerTapGesture.numberOfTouchesRequired = 3;
-        avx512_threeFingerTapGesture.numberOfTapsRequired = 1;
+        [[UITapGestureRecognizer alloc]
+        initWithTarget:self
+        action:@selector(
+        avx512_threeFingerTapRecognized:)];
         /*
-        * Do not swallow the application’s normal touches.
+        * Exactly one tap with three fingers.
+            */
+            avx512_threeFingerTapGesture.numberOfTapsRequired = 1;
+            avx512_threeFingerTapGesture.numberOfTouchesRequired = 3;
+        /*
+        * Do not interfere with the host application’s normal
+        * touch handling.
             */
             avx512_threeFingerTapGesture.cancelsTouchesInView = NO;
             avx512_threeFingerTapGesture.delaysTouchesBegan = NO;
             avx512_threeFingerTapGesture.delaysTouchesEnded = NO;
             }
     /*
-    * Make absolutely sure the recognizer is not attached to an old
-    * window before attaching it to the current host application window.
+    * Attach to the current application window.
         */
-        if (avx512_threeFingerTapGesture.view &&
-        avx512_threeFingerTapGesture.view != targetWindow) {
-        [avx512_threeFingerTapGesture.view
-        removeGestureRecognizer:
+        if (avx512_threeFingerTapGesture.view != targetWindow) {
+        [targetWindow
+        addGestureRecognizer:
         avx512_threeFingerTapGesture];
+        NSLog(
+        @”[AVX512] Three-finger tap installed on %@”,
+        targetWindow
+        );
         }
-    if (avx512_threeFingerTapGesture.view != targetWindow) {
-    [targetWindow
-    addGestureRecognizer:
-    avx512_threeFingerTapGesture];
+        }
 
-  NSLog(
-      @"[AVX512] Installed three-finger tap on %@",
-      targetWindow
-  );
+#pragma mark - Gesture Action
 
+* (void)avx512_threeFingerTapRecognized:
+    (UITapGestureRecognizer *)gesture
+    {
+    if (gesture.state != UIGestureRecognizerStateEnded) {
+    return;
     }
+    AVX512Manager *manager =
+    [AVX512Manager sharedManager];
+    if (!manager) {
+    NSLog(
+    @”[AVX512] Three-finger tap detected, “
+    @“but sharedManager is unavailable.”
+    );
+    return;
     }
+    NSLog(
+    @”[AVX512] Three-finger tap → toggleExplorer”
+    );
+    /*
+    * Use the existing AVX512 explorer/menu entry point.
+    * This preserves the existing runtime tools:
+    * View
+    * Select
+    * Recent
+    * Move
+    * Disassemble
+    * Hook
+    * Capture
+    * Filza
+    * Protect
+    * etc.
+        */
+        [manager toggleExplorer];
+        }
 
 #pragma mark - Target Window
 
@@ -153,7 +150,6 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
     UIWindow *applicationWindow = nil;
     /*
     * iOS 13+
-    * Prefer the foreground-active scene and its key window.
         */
         if (@available(iOS 13.0, *)) {
         for (UIScene *scene
@@ -169,8 +165,8 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
  UIWindowScene *windowScene =
      (UIWindowScene *)scene;
  /*
-  * First priority:
-  * key window that is not the AVX512 window.
+  * First preference:
+  * active key window that is not AVX512Window.
   */
  for (UIWindow *window
       in windowScene.windows) {
@@ -185,7 +181,7 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
      break;
  }
  /*
-  * Second priority:
+  * Second preference:
   * any key window.
   */
  for (UIWindow *window
@@ -199,8 +195,8 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
      break;
  }
  /*
-  * Third priority:
-  * visible non-AVX512 window.
+  * Third preference:
+  * visible normal-level non-AVX512 window.
   */
  for (UIWindow *window
       in windowScene.windows) {
@@ -221,7 +217,7 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
         }
         }
     /*
-    * iOS < 13 fallback.
+    * Legacy / fallback window lookup.
         */
         if (!applicationWindow) {
 
@@ -231,7 +227,7 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
     NSArray<UIWindow *> *windows =
         [UIApplication sharedApplication].windows;
     /*
-     * Prefer a visible key window that isn't AVX512Window.
+     * Prefer a key window that is not AVX512Window.
      */
     for (UIWindow *window in windows) {
         if (window.isKeyWindow &&
@@ -242,8 +238,7 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
         }
     }
     /*
-     * Look for any visible non-AVX512 window if no key window
-     * was found.
+     * Look for another visible application window.
      */
     if (!applicationWindow) {
         for (UIWindow *window in windows) {
@@ -268,8 +263,8 @@ static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
 }
 
 /*
- * Never intentionally install the gesture on the AVX512
- * presentation window when another application window exists.
+ * Never intentionally attach the gesture to AVX512Window if
+ * another usable application window is available.
  */
 if (applicationWindow &&
     [NSStringFromClass(applicationWindow.class)
@@ -302,8 +297,7 @@ if (applicationWindow &&
                     }
                 }
             }
-            if (applicationWindow !=
-                nil &&
+            if (applicationWindow &&
                 ![NSStringFromClass(applicationWindow.class)
                     isEqualToString:@"AVX512Window"]) {
                 break;
