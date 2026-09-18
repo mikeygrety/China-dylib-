@@ -2,14 +2,12 @@
 //  AVX512GeneratedProject.m
 //  AVX512 / MRzefv
 //
-//  Converts recorded AVX512 edit operations into a real,
-//  isolated MRzefvGenerated build project.
+//  Converts recorded AVX512 edit operations into an isolated
+//  MRzefvGenerated build project.
 //
 //  This file runs inside AVX512.
 //  It is NOT compiled into MRzefvGenerated.dylib.
 //
-
-#import “AVX512GeneratedProject.h”
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
@@ -36,10 +34,12 @@ AVX512GeneratedOperationReplaceImage
 @end
 
 @implementation AVX512GeneratedOperation
-
 @end
 
-#pragma mark - Generator
+#pragma mark - Generator Interface
+
+@interface AVX512GeneratedProject : NSObject
+@end
 
 @interface AVX512GeneratedProject ()
 
@@ -63,9 +63,11 @@ AVX512GeneratedOperationReplaceImage
     error:(NSError **)error;
 * (NSString *)sessionIdentifier;
 * (NSString *)objcString:(NSString *)value;
-* (id)operationValue:(id)operation key:(NSString *)key;
+* (id)operationValue:(id)operation
+    key:(NSString *)key;
 * (NSInteger)operationType:(id)operation;
-* (NSString *)operationClassName:(id)operation fallback:(NSString *)fallback;
+* (NSString *)operationClassName:(id)operation
+    fallback:(NSString *)fallback;
 * (NSString *)operationViewPath:(id)operation;
 * (NSDictionary *)operationValues:(id)operation;
 * (id)fail:(NSError **)error
@@ -96,14 +98,8 @@ AVX512GeneratedOperationReplaceImage
     reason:@“No edit operations were recorded.”];
     }
     /*
-    * ONE session ID.
-    * This value is generated exactly once and then reused for:
-    * project directory
-    * manifest.json
-    * generation-receipt.json
-    * generated header
-    * generated implementation
-    * GitHub Actions creates a separate build ID.
+    * ONE UUID PER GENERATION.
+    * This exact value is reused by every generated artifact.
         */
         NSString *sessionID = [self sessionIdentifier];
     NSString *targetName = @“MRzefvGenerated”;
@@ -114,7 +110,8 @@ AVX512GeneratedOperationReplaceImage
     if (!root) {
     return nil;
     }
-    NSFileManager *fm = [NSFileManager defaultManager];
+    NSFileManager *fm =
+    [NSFileManager defaultManager];
     NSURL *sources =
     [root URLByAppendingPathComponent:@“Sources”
     isDirectory:YES];
@@ -133,16 +130,16 @@ AVX512GeneratedOperationReplaceImage
     error:error]) {
     return nil;
     }
-    /*
-    * The actual Objective-C runtime class of the selected view.
-    * Do not use object_getClass() here. [targetView class]
-    * is the intended class identity for NSClassFromString().
-        */
-        NSString *className =
-        NSStringFromClass([targetView class]);
+    NSString *className =
+    NSStringFromClass([targetView class]);
     if (className.length == 0) {
     className = @“UIView”;
     }
+    NSLog(@”[AVX512] Generating MRzefv project”);
+    NSLog(@”[AVX512] Session: %@”, sessionID);
+    NSLog(@”[AVX512] Target: %@”, className);
+    NSLog(@”[AVX512] Operations: %lu”,
+    (unsigned long)operations.count);
     NSString *header =
     [self headerSourceForTarget:targetName
     sessionID:sessionID];
@@ -156,15 +153,17 @@ AVX512GeneratedOperationReplaceImage
     sessionID:sessionID
     className:className
     operations:operations];
-    NSString *buildScript = [self buildScript];
-    NSString *workflow = [self workflow];
+    NSString *buildScript =
+    [self buildScript];
+    NSString *workflow =
+    [self workflow];
     NSURL *headerURL =
     [sources URLByAppendingPathComponent:@“MRzefvGenerated.h”];
     NSURL *implementationURL =
     [sources URLByAppendingPathComponent:@“MRzefvGenerated.m”];
     NSURL *manifestURL =
     [root URLByAppendingPathComponent:@“manifest.json”];
-    NSURL *buildScriptURL =
+    NSURL *buildURL =
     [root URLByAppendingPathComponent:@“build.sh”];
     NSURL *workflowURL =
     [workflows
@@ -185,7 +184,7 @@ AVX512GeneratedOperationReplaceImage
     return nil;
     }
     if (![self writeString:buildScript
-    toURL:buildScriptURL
+    toURL:buildURL
     error:error]) {
     return nil;
     }
@@ -195,16 +194,17 @@ AVX512GeneratedOperationReplaceImage
     return nil;
     }
     /*
-    * build.sh must be executable.
+    * Make build.sh executable.
         */
         [fm setAttributes:@{
         NSFilePosixPermissions : @0755
         }
-        ofItemAtPath:buildScriptURL.path
+        ofItemAtPath:buildURL.path
         error:nil];
     /*
     * Generation receipt.
-    * This MUST use the same sessionID as manifest.json.
+    * IMPORTANT:
+    * Same sessionID as manifest.json.
         */
         NSDictionary *receipt = @{
         @“generator” : @“AVX512/MRzefv”,
@@ -229,7 +229,8 @@ AVX512GeneratedOperationReplaceImage
 
     }
     NSURL *receiptURL =
-    [root URLByAppendingPathComponent:@“generation-receipt.json”];
+    [root
+    URLByAppendingPathComponent:@“generation-receipt.json”];
     if (![receiptData writeToURL:receiptURL
     options:NSDataWritingAtomic
     error:error]) {
@@ -237,12 +238,6 @@ AVX512GeneratedOperationReplaceImage
     }
     NSLog(@”[AVX512] Generated project:”);
     NSLog(@”%@”, root.path);
-    NSLog(@”[AVX512] Session ID:”);
-    NSLog(@”%@”, sessionID);
-    NSLog(@”[AVX512] Target class:”);
-    NSLog(@”%@”, className);
-    NSLog(@”[AVX512] Operations:”);
-    NSLog(@”%lu”, (unsigned long)operations.count);
     return root;
     }
 
@@ -252,7 +247,8 @@ AVX512GeneratedOperationReplaceImage
     target:(NSString *)target
     error:(NSError **)error
     {
-    NSFileManager *fm = [NSFileManager defaultManager];
+    NSFileManager *fm =
+    [NSFileManager defaultManager];
     NSURL *documents =
     [fm URLsForDirectory:NSDocumentDirectory
     inDomains:NSUserDomainMask].firstObject;
@@ -265,12 +261,12 @@ AVX512GeneratedOperationReplaceImage
     [documents
     URLByAppendingPathComponent:@“AVX512/Generated”
     isDirectory:YES];
-    NSURL *sessionDirectory =
+    NSURL *sessionRoot =
     [buildRoot
     URLByAppendingPathComponent:sessionID
     isDirectory:YES];
     NSURL *project =
-    [sessionDirectory
+    [sessionRoot
     URLByAppendingPathComponent:target
     isDirectory:YES];
     if (![fm createDirectoryAtURL:project
@@ -319,7 +315,7 @@ AVX512GeneratedOperationReplaceImage
     return source;
     }
 
-#pragma mark - Objective-C Source Generation
+#pragma mark - Generated Objective-C
 
 * (NSString *)implementationSourceForTarget:(NSString *)target
     sessionID:(NSString *)sessionID
@@ -328,11 +324,6 @@ AVX512GeneratedOperationReplaceImage
     {
     NSMutableString *source =
     [NSMutableString string];
-    /*
-    * Every generated source fragment is appended as a complete
-    * Objective-C NSString literal.
-    * This avoids the previous malformed nested string problem.
-        */
     [source appendString:
     @”//\n”
     @”// MRzefvGenerated.m\n”
@@ -356,13 +347,14 @@ AVX512GeneratedOperationReplaceImage
     @“static void MRzefvApplyOperations(UIView *view);\n”
     @”\n”];
     /*
-    * Target lookup.
+    * Target class.
         */
         [source appendString:
         @“static UIView *MRzefvFindTargetView(void)\n”
         @”{\n”
         @”    Class targetClass = NSClassFromString(@"”];
-    [source appendString:[self objcString:className]];
+    [source appendString:
+    [self objcString:className]];
     [source appendString:
     @”");\n”
     @”\n”
@@ -371,10 +363,6 @@ AVX512GeneratedOperationReplaceImage
     @”    }\n”
     @”\n”
     @”    UIApplication *application = UIApplication.sharedApplication;\n”
-    @”\n”
-    @”    if (!application) {\n”
-    @”        return nil;\n”
-    @”    }\n”
     @”\n”
     @”    for (UIScene *scene in application.connectedScenes) {\n”
     @”        if (![scene isKindOfClass:[UIWindowScene class]]) {\n”
@@ -417,7 +405,7 @@ AVX512GeneratedOperationReplaceImage
     @”}\n”
     @”\n”];
     /*
-    * Generate mutations.
+    * Apply recorded operations.
         */
         [source appendString:
         @“static void MRzefvApplyOperations(UIView *view)\n”
@@ -428,7 +416,8 @@ AVX512GeneratedOperationReplaceImage
         @”\n”];
     for (id operation in operations) {
 
-  NSInteger type = [self operationType:operation];
+  NSInteger type =
+      [self operationType:operation];
   NSDictionary *values =
       [self operationValues:operation];
   switch (type) {
@@ -569,20 +558,16 @@ AVX512GeneratedOperationReplaceImage
     [NSMutableArray arrayWithCapacity:operations.count];
     for (id operation in operations) {
 
-  NSInteger type =
-      [self operationType:operation];
-  NSString *operationClass =
-      [self operationClassName:operation
-                      fallback:className];
-  NSString *viewPath =
-      [self operationViewPath:operation];
-  NSDictionary *values =
-      [self operationValues:operation];
   NSDictionary *entry = @{
-      @"type" : @(type),
-      @"className" : operationClass ?: className,
-      @"viewPath" : viewPath ?: @"",
-      @"values" : values ?: @{}
+      @"type" :
+          @([self operationType:operation]),
+      @"className" :
+          [self operationClassName:operation
+                          fallback:className],
+      @"viewPath" :
+          [self operationViewPath:operation],
+      @"values" :
+          [self operationValues:operation]
   };
   [manifestOperations addObject:entry];
 
@@ -607,7 +592,8 @@ AVX512GeneratedOperationReplaceImage
   @"target" : @{
       @"className" : className
   },
-  @"operations" : manifestOperations,
+  @"operations" :
+      manifestOperations,
   @"resources" : @[],
   @"integrity" : @{
       @"sourceHash" : @"__GENERATED_BY_BUILD__",
@@ -622,7 +608,7 @@ AVX512GeneratedOperationReplaceImage
     options:NSJSONWritingPrettyPrinted
     error:&error];
     if (!data) {
-    NSLog(@”[AVX512] Manifest serialization failed: %@”, error);
+    NSLog(@”[AVX512] Manifest error: %@”, error);
     return @”{}”;
     }
     return
@@ -653,36 +639,14 @@ AVX512GeneratedOperationReplaceImage
     @“echo " MRzefv Generated Dylib Build"\n”
     @“echo "========================================"\n”
     @“echo "Target:       ${TARGET_NAME}"\n”
-    @“echo "Source:       ${SOURCE_FILE}"\n”
-    @“echo "Minimum iOS:  ${MIN_IOS_VERSION}"\n”
     @“echo "Session:      ${MRZEFV_SESSION_ID:-unknown}"\n”
     @“echo "Build ID:     ${MRZEFV_BUILD_ID:-unknown}"\n”
     @“echo\n”
     @”\n”
-    @“command -v xcrun >/dev/null 2>&1 || {\n”
-    @”    echo "ERROR: xcrun is unavailable" >&2\n”
-    @”    exit 1\n”
-    @”}\n”
-    @”\n”
-    @“command -v lipo >/dev/null 2>&1 || {\n”
-    @”    echo "ERROR: lipo is unavailable" >&2\n”
-    @”    exit 1\n”
-    @”}\n”
-    @”\n”
-    @“command -v otool >/dev/null 2>&1 || {\n”
-    @”    echo "ERROR: otool is unavailable" >&2\n”
-    @”    exit 1\n”
-    @”}\n”
-    @”\n”
-    @“command -v file >/dev/null 2>&1 || {\n”
-    @”    echo "ERROR: file is unavailable" >&2\n”
-    @”    exit 1\n”
-    @”}\n”
-    @”\n”
-    @“command -v zip >/dev/null 2>&1 || {\n”
-    @”    echo "ERROR: zip is unavailable" >&2\n”
-    @”    exit 1\n”
-    @”}\n”
+    @“command -v xcrun >/dev/null 2>&1 || exit 1\n”
+    @“command -v lipo >/dev/null 2>&1 || exit 1\n”
+    @“command -v otool >/dev/null 2>&1 || exit 1\n”
+    @“command -v zip >/dev/null 2>&1 || exit 1\n”
     @”\n”
     @“CLANG="$(xcrun –sdk iphoneos -f clang)"\n”
     @“SDK="$(xcrun –sdk iphoneos –show-sdk-path)"\n”
@@ -699,21 +663,12 @@ AVX512GeneratedOperationReplaceImage
     @“fi\n”
     @”\n”
     @“if [[ ! -f "$SOURCE_FILE" ]]; then\n”
-    @”    echo "ERROR: missing $SOURCE_FILE" >&2\n”
-    @”    exit 1\n”
-    @“fi\n”
-    @”\n”
-    @“if [[ ! -f "Sources/MRzefvGenerated.h" ]]; then\n”
-    @”    echo "ERROR: missing Sources/MRzefvGenerated.h" >&2\n”
+    @”    echo "ERROR: $SOURCE_FILE not found" >&2\n”
     @”    exit 1\n”
     @“fi\n”
     @”\n”
     @“rm -rf "$BUILD_DIR" "$PACKAGES_DIR"\n”
-    @”\n”
-    @“mkdir -p \\n”
-    @”    "$BUILD_DIR/arm64" \\n”
-    @”    "$BUILD_DIR/arm64e" \\n”
-    @”    "$PACKAGES_DIR"\n”
+    @“mkdir -p "$BUILD_DIR/arm64" "$BUILD_DIR/arm64e" "$PACKAGES_DIR"\n”
     @”\n”
     @“COMMON_CFLAGS=(\n”
     @”    -fobjc-arc\n”
@@ -740,62 +695,39 @@ AVX512GeneratedOperationReplaceImage
     @”)\n”
     @”\n”
     @“echo "[1/7] Compiling arm64"\n”
-    @”\n”
-    @”"$CLANG" \\n”
-    @”    "${COMMON_CFLAGS[@]}" \\n”
+    @”"$CLANG" "${COMMON_CFLAGS[@]}" \\n”
     @”    -arch arm64 \\n”
     @”    -c "$SOURCE_FILE" \\n”
     @”    -o "$BUILD_DIR/arm64/${SOURCE_NAME}.o"\n”
     @”\n”
-    @“echo "✓ arm64 object created"\n”
-    @”\n”
     @“echo "[2/7] Linking arm64"\n”
-    @”\n”
-    @”"$CLANG" \\n”
-    @”    "${COMMON_LDFLAGS[@]}" \\n”
+    @”"$CLANG" "${COMMON_LDFLAGS[@]}" \\n”
     @”    -arch arm64 \\n”
     @”    "$BUILD_DIR/arm64/${SOURCE_NAME}.o" \\n”
     @”    -o "$BUILD_DIR/arm64/${TARGET_NAME}.dylib"\n”
     @”\n”
-    @“echo "✓ arm64 dylib created"\n”
-    @”\n”
     @“echo "[3/7] Compiling arm64e"\n”
-    @”\n”
-    @”"$CLANG" \\n”
-    @”    "${COMMON_CFLAGS[@]}" \\n”
+    @”"$CLANG" "${COMMON_CFLAGS[@]}" \\n”
     @”    -arch arm64e \\n”
     @”    -c "$SOURCE_FILE" \\n”
     @”    -o "$BUILD_DIR/arm64e/${SOURCE_NAME}.o"\n”
     @”\n”
-    @“echo "✓ arm64e object created"\n”
-    @”\n”
     @“echo "[4/7] Linking arm64e"\n”
-    @”\n”
-    @”"$CLANG" \\n”
-    @”    "${COMMON_LDFLAGS[@]}" \\n”
+    @”"$CLANG" "${COMMON_LDFLAGS[@]}" \\n”
     @”    -arch arm64e \\n”
     @”    "$BUILD_DIR/arm64e/${SOURCE_NAME}.o" \\n”
     @”    -o "$BUILD_DIR/arm64e/${TARGET_NAME}.dylib"\n”
     @”\n”
-    @“echo "✓ arm64e dylib created"\n”
-    @”\n”
     @“echo "[5/7] Creating universal dylib"\n”
-    @”\n”
     @“lipo -create \\n”
     @”    "$BUILD_DIR/arm64/${TARGET_NAME}.dylib" \\n”
     @”    "$BUILD_DIR/arm64e/${TARGET_NAME}.dylib" \\n”
     @”    -output "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”
     @”\n”
-    @“echo "✓ universal dylib created"\n”
-    @”\n”
-    @“echo "[6/7] Signing with ldid"\n”
-    @”\n”
+    @“echo "[6/7] Signing"\n”
     @”"$LDID" -S "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”
     @”\n”
-    @“echo "✓ ad-hoc signature applied"\n”
-    @”\n”
-    @“echo "[7/7] Writing package metadata"\n”
-    @”\n”
+    @“echo "[7/7] Packaging"\n”
     @“cat > "$PACKAGES_DIR/build-info.json" <<EOF\n”
     @”{\n”
     @”  "target": "${TARGET_NAME}",\n”
@@ -812,33 +744,17 @@ AVX512GeneratedOperationReplaceImage
     @”}\n”
     @“EOF\n”
     @”\n”
-    @“echo "Creating ZIP"\n”
-    @”\n”
     @”(\n”
     @”    cd "$PACKAGES_DIR"\n”
-    @”    rm -f "${TARGET_NAME}.zip"\n”
-    @”    zip -q \\n”
-    @”        "${TARGET_NAME}.zip" \\n”
+    @”    zip -q "${TARGET_NAME}.zip" \\n”
     @”        "${TARGET_NAME}.dylib" \\n”
     @”        "build-info.json"\n”
     @”)\n”
     @”\n”
-    @“echo\n”
     @“echo "========================================"\n”
     @“echo " BUILD COMPLETE"\n”
     @“echo "========================================"\n”
-    @“echo\n”
-    @“echo "Dylib:"\n”
-    @“ls -lh "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”
-    @“echo\n”
-    @“echo "ZIP:"\n”
-    @“ls -lh "$PACKAGES_DIR/${TARGET_NAME}.zip"\n”
-    @“echo\n”
-    @“echo "Architectures:"\n”
-    @“lipo -info "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”
-    @“echo\n”
-    @“echo "Linked libraries:"\n”
-    @“otool -L "$PACKAGES_DIR/${TARGET_NAME}.dylib" || true\n”;
+    @“lipo -info "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”;
     return script;
     }
 
@@ -876,27 +792,15 @@ AVX512GeneratedOperationReplaceImage
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
-    @”          echo "========================================"\n”
-    @”          echo "APPLE TOOLCHAIN"\n”
-    @”          echo "========================================"\n”
     @”          xcodebuild -version\n”
-    @”          echo\n”
-    @”          echo "iPhoneOS SDK:"\n”
     @”          xcrun –sdk iphoneos –show-sdk-path\n”
-    @”          echo\n”
-    @”          echo "Clang:"\n”
     @”          xcrun –sdk iphoneos -f clang\n”
     @”\n”
     @”      - name: Install ldid\n”
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
-    @”          echo "========================================"\n”
-    @”          echo "INSTALLING LDID"\n”
-    @”          echo "========================================"\n”
-    @”          if command -v ldid >/dev/null 2>&1; then\n”
-    @”            echo "ldid already installed"\n”
-    @”          else\n”
+    @”          if ! command -v ldid >/dev/null 2>&1; then\n”
     @”            brew update\n”
     @”            brew install ldid\n”
     @”          fi\n”
@@ -912,9 +816,6 @@ AVX512GeneratedOperationReplaceImage
     @”          echo "VALIDATING GENERATED PROJECT"\n”
     @”          echo "========================================"\n”
     @”\n”
-    @”          echo "Repository root:"\n”
-    @”          pwd\n”
-    @”\n”
     @”          required_files=(\n”
     @”            "build.sh"\n”
     @”            "manifest.json"\n”
@@ -925,7 +826,6 @@ AVX512GeneratedOperationReplaceImage
     @”          for file in "${required_files[@]}"; do\n”
     @”            if [[ ! -f "$file" ]]; then\n”
     @”              echo "::error::Missing required file: $file"\n”
-    @”              echo\n”
     @”              echo "Repository contents:"\n”
     @”              find . -maxdepth 5 -type f -print | sort\n”
     @”              exit 1\n”
@@ -933,70 +833,48 @@ AVX512GeneratedOperationReplaceImage
     @”            echo "✓ $file"\n”
     @”          done\n”
     @”\n”
-    @”          echo\n”
-    @”          echo "✓ Generated project validation passed"\n”
+    @”          echo "✓ Validation passed"\n”
     @”\n”
     @”      - name: Read generated session ID\n”
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
     @”\n”
-    @”          SESSION_ID="$(\n”
-    @”            plutil \\n”
-    @”              -extract build.sessionID \\n”
-    @”              raw \\n”
-    @”              -o - \\n”
-    @”              manifest.json\n”
-    @”          )"\n”
+    @”          SESSION_ID="$(plutil -extract build.sessionID raw -o - manifest.json)"\n”
     @”\n”
     @”          if [[ -z "$SESSION_ID" || "$SESSION_ID" == "null" ]]; then\n”
     @”            echo "::error::manifest.json does not contain build.sessionID"\n”
     @”            exit 1\n”
     @”          fi\n”
     @”\n”
-    @”          echo "Session ID: $SESSION_ID"\n”
     @”          echo "MRZEFV_SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"\n”
+    @”          echo "Session ID: $SESSION_ID"\n”
     @”\n”
-    @”      - name: Verify session metadata\n”
+    @”      - name: Verify generation receipt\n”
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
     @”\n”
-    @”          MANIFEST_SESSION="$(\n”
-    @”            plutil \\n”
-    @”              -extract build.sessionID \\n”
-    @”              raw \\n”
-    @”              -o - \\n”
-    @”              manifest.json\n”
-    @”          )"\n”
-    @”\n”
     @”          if [[ -f "generation-receipt.json" ]]; then\n”
-    @”            RECEIPT_SESSION="$(\n”
-    @”              plutil \\n”
-    @”                -extract sessionID \\n”
-    @”                raw \\n”
-    @”                -o - \\n”
-    @”                generation-receipt.json\n”
-    @”            )"\n”
+    @”            RECEIPT_SESSION="$(plutil -extract sessionID raw -o - generation-receipt.json)"\n”
     @”\n”
-    @”            echo "Manifest: $MANIFEST_SESSION"\n”
-    @”            echo "Receipt:  $RECEIPT_SESSION"\n”
-    @”\n”
-    @”            if [[ "$MANIFEST_SESSION" != "$RECEIPT_SESSION" ]]; then\n”
+    @”            if [[ "$RECEIPT_SESSION" != "$MRZEFV_SESSION_ID" ]]; then\n”
     @”              echo "::error::Session ID mismatch"\n”
+    @”              echo "Manifest: $MRZEFV_SESSION_ID"\n”
+    @”              echo "Receipt:  $RECEIPT_SESSION"\n”
     @”              exit 1\n”
     @”            fi\n”
-    @”          fi\n”
     @”\n”
-    @”          echo "✓ Session metadata verified"\n”
+    @”            echo "✓ Session IDs match"\n”
+    @”          fi\n”
     @”\n”
     @”      - name: Set build identity\n”
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
     @”          BUILD_ID="MRZ-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"\n”
-    @”          echo "MRZEFV_BUILD_ID=${BUILD_ID}" >> "$GITHUB_ENV"\n”
-    @”          echo "Build ID: ${BUILD_ID}"\n”
+    @”          echo "MRZEFV_BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"\n”
+    @”          echo "Build ID: $BUILD_ID"\n”
     @”\n”
     @”      - name: Build generated dylib\n”
     @”        shell: bash\n”
@@ -1004,12 +882,6 @@ AVX512GeneratedOperationReplaceImage
     @”          OUT_NAME: ${{ github.event.inputs.out_name || ‘MRzefvGenerated’ }}\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
-    @”          echo "========================================"\n”
-    @”          echo "MRzefv GENERATED BUILD"\n”
-    @”          echo "========================================"\n”
-    @”          echo "Target:  ${OUT_NAME}"\n”
-    @”          echo "Session: ${MRZEFV_SESSION_ID}"\n”
-    @”          echo "Build:   ${MRZEFV_BUILD_ID}"\n”
     @”          chmod +x build.sh\n”
     @”          ./build.sh\n”
     @”\n”
@@ -1018,78 +890,57 @@ AVX512GeneratedOperationReplaceImage
     @”        run: |\n”
     @”          set -euo pipefail\n”
     @”\n”
-    @”          if [[ ! -d "packages" ]]; then\n”
+    @”          [[ -d packages ]] || {\n”
     @”            echo "::error::packages/ was not produced"\n”
     @”            exit 1\n”
-    @”          fi\n”
-    @”\n”
-    @”          find packages -maxdepth 1 -type f -print -exec ls -lh {} \;\n”
+    @”          }\n”
     @”\n”
     @”          DYLIB="$(find packages -maxdepth 1 -name ".dylib" -type f | head -n 1)"\n”
     @”          ZIP="$(find packages -maxdepth 1 -name ".zip" -type f | head -n 1)"\n”
     @”\n”
-    @”          if [[ -z "$DYLIB" ]]; then\n”
+    @”          [[ -n "$DYLIB" ]] || {\n”
     @”            echo "::error::No dylib produced"\n”
     @”            exit 1\n”
-    @”          fi\n”
+    @”          }\n”
     @”\n”
-    @”          if [[ -z "$ZIP" ]]; then\n”
+    @”          [[ -n "$ZIP" ]] || {\n”
     @”            echo "::error::No ZIP produced"\n”
     @”            exit 1\n”
-    @”          fi\n”
+    @”          }\n”
     @”\n”
-    @”          echo "✓ Dylib: $DYLIB"\n”
-    @”          echo "✓ ZIP:   $ZIP"\n”
+    @”          echo "Dylib: $DYLIB"\n”
+    @”          echo "ZIP:   $ZIP"\n”
     @”\n”
     @”      - name: Verify dylib\n”
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
-    @”\n”
     @”          DYLIB="$(find packages -maxdepth 1 -name ".dylib" -type f | head -n 1)"\n”
-    @”\n”
-    @”          echo "========================================"\n”
-    @”          echo "VERIFYING DYLIB"\n”
-    @”          echo "========================================"\n”
-    @”\n”
     @”          file "$DYLIB"\n”
-    @”          echo\n”
     @”          lipo -info "$DYLIB"\n”
-    @”          echo\n”
     @”          otool -D "$DYLIB"\n”
-    @”          echo\n”
     @”          otool -L "$DYLIB" || true\n”
     @”\n”
     @”      - name: Verify build metadata\n”
     @”        shell: bash\n”
     @”        run: |\n”
     @”          set -euo pipefail\n”
-    @”\n”
     @”          BUILD_INFO="packages/build-info.json"\n”
     @”\n”
-    @”          if [[ ! -f "$BUILD_INFO" ]]; then\n”
-    @”            echo "::error::Missing $BUILD_INFO"\n”
+    @”          [[ -f "$BUILD_INFO" ]] || {\n”
+    @”            echo "::error::Missing build-info.json"\n”
+    @”            exit 1\n”
+    @”          }\n”
+    @”\n”
+    @”          BUILD_SESSION="$(plutil -extract sessionID raw -o - "$BUILD_INFO")"\n”
+    @”\n”
+    @”          if [[ "$BUILD_SESSION" != "$MRZEFV_SESSION_ID" ]]; then\n”
+    @”            echo "::error::Session ID mismatch in build-info.json"\n”
     @”            exit 1\n”
     @”          fi\n”
     @”\n”
     @”          cat "$BUILD_INFO"\n”
-    @”\n”
-    @”          BUILD_SESSION="$(\n”
-    @”            plutil \\n”
-    @”              -extract sessionID \\n”
-    @”              raw \\n”
-    @”              -o - \\n”
-    @”              "$BUILD_INFO"\n”
-    @”          )"\n”
-    @”\n”
-    @”          if [[ "$BUILD_SESSION" != "$MRZEFV_SESSION_ID" ]]; then\n”
-    @”            echo "::error::Session ID mismatch in build-info.json"\n”
-    @”            echo "Expected: $MRZEFV_SESSION_ID"\n”
-    @”            echo "Found:    $BUILD_SESSION"\n”
-    @”            exit 1\n”
-    @”          fi\n”
-    @”\n”
-    @”          echo "✓ build-info.json session matches manifest.json"\n”
+    @”          echo "✓ Build metadata verified"\n”
     @”\n”
     @”      - name: Upload dylib\n”
     @”        uses: actions/upload-artifact@v4\n”
@@ -1129,16 +980,22 @@ AVX512GeneratedOperationReplaceImage
     if (!operation || key.length == 0) {
     return nil;
     }
-    if ([operation isKindOfClass:[NSDictionary class]]) {
-    return [(NSDictionary *)operation objectForKey:key];
-    }
-    @try {
-    return [operation valueForKey:key];
-    }
-    @catch (__unused NSException *exception) {
-    return nil;
-    }
-    }
+    /*
+    * Support NSDictionary operations.
+        */
+        if ([operation isKindOfClass:[NSDictionary class]]) {
+        return [(NSDictionary *)operation objectForKey:key];
+        }
+    /*
+    * Support AVX512GeneratedOperation objects.
+        */
+        @try {
+        return [operation valueForKey:key];
+        }
+        @catch (__unused NSException *exception) {
+        return nil;
+        }
+        }
 * (NSInteger)operationType:(id)operation
     {
     id value =
@@ -1210,16 +1067,13 @@ AVX512GeneratedOperationReplaceImage
     error:error];
     }
 
-#pragma mark - Session ID
+#pragma mark - Session
 
-* (NSString )sessionIdentifier
+* (NSString *)sessionIdentifier
     {
-    /
-    * Called once per generation.
-        */
-        return
-        [NSUUID UUID].UUIDString.lowercaseString;
-        }
+    return
+    [NSUUID UUID].UUIDString.lowercaseString;
+    }
 
 #pragma mark - Objective-C Escaping
 
