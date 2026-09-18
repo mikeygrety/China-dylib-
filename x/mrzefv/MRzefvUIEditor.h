@@ -59,33 +59,37 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 
 @interface MRzefvUIEditorController : UITableViewController
 
+/**
+ * The currently selected live UIView.
+ *
+ * Selection is performed by the existing AVX512/FLEX
+ * Explorer. MRzefv does not create its own hit-testing
+ * or selection gesture system.
+ */
+@property (nonatomic, weak, nullable) UIView *selectedView;
+
+/**
+ * The current MRzefv UI modification profile.
+ *
+ * The profile records changes made through the editor
+ * and can be serialized with -JSONData.
+ */
 @property (nonatomic, strong, readonly)
     MRzefvUIProfile *profile;
 
 /**
- * The exact UIView returned by FLEX's existing live
- * selection system.
+ * Hands live-view selection to the existing Explorer.
  *
- * MRzefv does not perform its own hit-testing or install
- * another selection gesture recognizer.
- */
-@property (nonatomic, weak, nullable)
-    UIView *selectedView;
-
-/**
- * Hands live selection to FLEX's existing Explorer.
+ * The Explorer owns:
  *
- * FLEX owns the selection gesture, hit-testing, and
- * selection overlay. When selection completes, FLEX
- * invokes its live-selection completion with either:
+ * - Live-view hit testing
+ * - Selection gestures
+ * - Selection highlighting
+ * - Selected UIView resolution
  *
- *   selectedView != nil
- *       Successful UIView selection.
- *
- *   selectedView == nil
- *       Selection cancelled.
- *
- * The MRzefv editor is then restored.
+ * When selection finishes, the selected UIView is stored
+ * in selectedView. A cancelled selection leaves
+ * selectedView nil.
  */
 - (void)beginViewSelection;
 
@@ -96,13 +100,13 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 - (void)beginPreview;
 
 /**
- * Restores the current selected view and clears
+ * Restores the selected view where possible and clears
  * the recorded profile changes.
  */
 - (void)resetPreview;
 
 /**
- * Serializes and saves the current MRzefv profile.
+ * Serializes and saves the current MRzefv UI profile.
  */
 - (void)saveCurrentProfile;
 
