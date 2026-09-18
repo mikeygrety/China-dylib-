@@ -1,0 +1,177 @@
+name: Build MRzefv Generated Dylib
+on:
+  workflow_dispatch:
+    inputs:
+      out_name:
+        description: "Output dylib name"
+        required: false
+        default: "MRzefvGenerated"
+  push:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build Generated Dylib
+    runs-on: macos-15
+    steps:
+      # =========================================================
+      # CHECKOUT
+      # =========================================================
+      - name: Checkout generated project
+        uses: actions/checkout@v4
+      # =========================================================
+      # TOOLCHAIN
+      # =========================================================
+      - name: Show Apple toolchain
+        run: |
+          set -euo pipefail
+          echo "========================================"
+          echo "APPLE TOOLCHAIN"
+          echo "========================================"
+          xcodebuild -version
+          echo
+          echo "iPhoneOS SDK:"
+          xcrun --sdk iphoneos --show-sdk-path
+          echo
+          echo "Clang:"
+          xcrun --sdk iphoneos -f clang
+      # =========================================================
+      # LDID
+      # =========================================================
+      - name: Install ldid
+        run: |
+          set -euo pipefail
+          brew install ldid
+          echo
+          echo "ldid:"
+          ldid --version || true
+      # =========================================================
+      # VALIDATE GENERATED PACKAGE
+      # =========================================================
+      - name: Validate generated project
+        run: |
+          set -euo pipefail
+          echo "========================================"
+          echo "VALIDATING GENERATED PROJECT"
+          echo "========================================"
+          test -f "Makefile"
+          test -f "build.sh"
+          test -f "manifest.json"
+          test -f "Sources/MRzefvGenerated.h"
+          test -f "Sources/MRzefvGenerated.m"
+          echo "✓ Makefile"
+          echo "✓ build.sh"
+          echo "✓ manifest.json"
+          echo "✓ MRzefvGenerated.h"
+          echo "✓ MRzefvGenerated.m"
+          if [ -d "Resources" ]; then
+            echo "✓ Resources/"
+          else
+            echo "• Resources/ not present"
+          fi
+      # =========================================================
+      # BUILD ID
+      # =========================================================
+      - name: Set build identity
+        run: |
+          set -euo pipefail
+          BUILD_ID="MRZ-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "MRZEFV_BUILD_ID=${BUILD_ID}" >> "$GITHUB_ENV"
+          echo "Build ID:"
+          echo "${BUILD_ID}"
+      # =========================================================
+      # BUILD
+      # =========================================================
+      - name: Build generated dylib
+        env:
+          OUT_NAME: ${{ github.event.inputs.out_name || 'MRzefvGenerated' }}
+          MRZEFV_SESSION_ID: ${{ github.run_id }}
+          MRZEFV_BUILD_ID: ${{ env.MRZEFV_BUILD_ID }}
+        run: |
+          set -euo pipefail
+          echo "========================================"
+          echo "MRzefv GENERATED BUILD"
+          echo "========================================"
+          echo "Target:  ${OUT_NAME}"
+          echo "Session: ${MRZEFV_SESSION_ID}"
+          echo "Build:   ${MRZEFV_BUILD_ID}"
+          chmod +x build.sh
+          ./build.sh
+      # =========================================================
+      # VERIFY ARTIFACT DIRECTORY
+      # =========================================================
+      - name: Verify build output
+        run: |
+          set -euo pipefail
+          echo "========================================"
+          echo "BUILD OUTPUT"
+          echo "========================================"
+          test -d packages
+          find packages \
+            -maxdepth 1 \
+            -type f \
+            -print \
+            -exec ls -lh {} \;
+          echo
+          echo "Dylibs:"
+          find packages -maxdepth 1 -name "*.dylib" -print
+          echo
+          echo "ZIP files:"
+          find packages -maxdepth 1 -name "*.zip" -print
+      # =========================================================
+      # VERIFY DYLIB
+      # =========================================================
+      - name: Verify dylib
+        run: |
+          set -euo pipefail
+          DYLIB="$(find packages -maxdepth 1 -name "*.dylib" -type f | head -n 1)"
+          if [ -z "$DYLIB" ]; then
+            echo "::error::No dylib produced."
+            exit 1
+          fi
+          echo "Dylib:"
+          echo "$DYLIB"
+          echo
+          echo "File:"
+          file "$DYLIB"
+          echo
+          echo "Architectures:"
+          lipo -info "$DYLIB"
+          echo
+          echo "Linked libraries:"
+          otool -L "$DYLIB" || true
+      # =========================================================
+      # UPLOAD DYLIB
+      # =========================================================
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: MRzefvGenerated-dylib-${{ github.run_number }}
+          path: packages/*.dylib
+          if-no-files-found: error
+          retention-days: 30
+      # =========================================================
+      # UPLOAD ZIP
+      # =========================================================
+      - name: Upload generated ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: MRzefvGenerated-package-${{ github.run_number }}
+          path: packages/*.zip
+          if-no-files-found: error
+          retention-days: 30
+      # =========================================================
+      # UPLOAD BUILD METADATA
+      # =========================================================
+      - name: Upload build metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MRzefvGenerated-metadata-${{ github.run_number }}
+          path: |
+            manifest.json
+            dist/build-info.json
+          if-no-files-found: ignore
+          retention-days: 30
