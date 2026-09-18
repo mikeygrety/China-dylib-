@@ -57,6 +57,10 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 @property (nonatomic, weak, nullable) UIView *selectedView;
 
 /// Starts the existing AVX512/FLEX live-view selector.
+///
+/// MRzefv temporarily hands selection control to the Explorer.
+/// Once the user selects a live UIView, the Explorer invokes the
+/// pending selection completion and MRzefv is presented again.
 - (void)beginViewSelection;
 
 - (void)beginPreview;
