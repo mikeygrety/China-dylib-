@@ -81,11 +81,6 @@
         }
 
         if (change.replacementValue.length) {
-            /*
-             * The Objective-C property is intentionally called
-             * replacementValue. The serialized profile format
-             * continues to expose this as "newValue".
-             */
             dictionary[@"newValue"] = change.replacementValue;
         }
 
@@ -188,17 +183,6 @@
 
 #pragma mark - Explorer Lookup
 
-/**
- * Searches the supplied controller hierarchy for the existing
- * AVX512 Explorer.
- *
- * The source/header filename remains FLEXExplorerViewController.h,
- * but the actual Objective-C class in that header is:
- *
- *     AVX512ExplorerViewController
- *
- * MRzefv therefore uses the actual class type here.
- */
 - (AVX512ExplorerViewController *)
     findExplorerFromViewController:(UIViewController *)controller {
 
@@ -212,10 +196,6 @@
         return (AVX512ExplorerViewController *)controller;
     }
 
-    /*
-     * Walk toward the presenter first because MRzefv is normally
-     * presented from the Explorer.
-     */
     if (controller.presentingViewController) {
 
         AVX512ExplorerViewController *explorer =
@@ -228,9 +208,6 @@
         }
     }
 
-    /*
-     * Check the navigation-controller hierarchy.
-     */
     if (controller.navigationController &&
         controller.navigationController != controller) {
 
@@ -244,9 +221,6 @@
         }
     }
 
-    /*
-     * Finally inspect child controllers.
-     */
     for (UIViewController *child
          in controller.childViewControllers) {
 
@@ -264,10 +238,6 @@
 
 #pragma mark - Application Explorer Lookup
 
-/**
- * Fallback lookup through the application's active window
- * hierarchy.
- */
 - (AVX512ExplorerViewController *)
     avx512ExplorerViewController {
 
@@ -321,9 +291,6 @@
     UIViewController *controller =
         keyWindow.rootViewController;
 
-    /*
-     * Walk the active presentation hierarchy.
-     */
     while (controller) {
 
         if ([controller
@@ -358,10 +325,6 @@
         controller = next;
     }
 
-    /*
-     * If the active chain did not expose it, perform a recursive
-     * search from the root controller.
-     */
     return [self
         findExplorerFromViewController:
             keyWindow.rootViewController];
@@ -404,19 +367,6 @@
 
     __weak typeof(self) weakSelf = self;
 
-    /*
-     * Important:
-     *
-     * AVX512ExplorerViewController's existing API takes exactly
-     * one argument:
-     *
-     *     UIView *selectedView
-     *
-     * A nil view means the FLEX selection was cancelled.
-     *
-     * MRzefv does not install another gesture recognizer,
-     * perform its own hit-testing, or create another overlay.
-     */
     [explorer
         beginLiveViewSelectionWithCompletion:
             ^(UIView *selectedView) {
@@ -447,10 +397,6 @@
                 );
             }
 
-            /*
-             * FLEX/AVX512 owns the selection transition.
-             * Once it finishes, restore the MRzefv editor.
-             */
             [self
                 presentEditorAfterSelectionFromExplorer:
                     explorer];
@@ -470,9 +416,6 @@
 
     dispatch_async(dispatch_get_main_queue(), ^{
 
-        /*
-         * If MRzefv is already being presented, simply refresh it.
-         */
         UIViewController *presented =
             explorer.presentedViewController;
 
@@ -492,10 +435,6 @@
                 }
             }
 
-            /*
-             * UIKit can still be finishing the FLEX transition.
-             * Retry on the next main-thread turn.
-             */
             dispatch_async(dispatch_get_main_queue(), ^{
 
                 if (!explorer.presentedViewController) {
@@ -527,10 +466,6 @@
             return;
         }
 
-        /*
-         * Reuse this exact MRzefv controller so selectedView and
-         * profile survive the FLEX handoff.
-         */
         UINavigationController *navigationController =
             [[UINavigationController alloc]
                 initWithRootViewController:self];
@@ -562,11 +497,6 @@
         NSStringFromClass(view.class),
         view
     );
-
-    /*
-     * Changes are applied directly to the selected UIView.
-     * Each modification is recorded in the profile.
-     */
 }
 
 #pragma mark - Reset Preview
@@ -581,10 +511,6 @@
         return;
     }
 
-    /*
-     * Restore in reverse order so multiple edits to the same
-     * property are unwound correctly.
-     */
     for (MRzefvUIChange *change
          in self.profile.changes.reverseObjectEnumerator) {
 
@@ -639,10 +565,8 @@
             case MRzefvUIChangeTypeHidden: {
 
                 if (change.originalValue.length) {
-
                     view.hidden =
-                        [change.originalValue
-                            boolValue];
+                        [change.originalValue boolValue];
                 }
 
                 break;
@@ -687,13 +611,10 @@
 
                 if (change.originalValue.length) {
 
-                    CGRect originalFrame =
+                    view.frame =
                         CGRectFromString(
                             change.originalValue
                         );
-
-                    view.frame =
-                        originalFrame;
                 }
 
                 break;
@@ -701,11 +622,6 @@
 
             case MRzefvUIChangeTypeAddText: {
 
-                /*
-                 * Added labels are represented by an AddText
-                 * profile record. Remove the most recently added
-                 * matching label where possible.
-                 */
                 for (UIView *subview
                      in [view.subviews reverseObjectEnumerator]) {
 
@@ -837,21 +753,24 @@
             ((UILabel *)selectedView).text =
                 replacement;
 
-            propertyName = @"text";
+            propertyName =
+                @"text";
 
         } else if ([selectedView isKindOfClass:UITextField.class]) {
 
             ((UITextField *)selectedView).text =
                 replacement;
 
-            propertyName = @"text";
+            propertyName =
+                @"text";
 
         } else if ([selectedView isKindOfClass:UITextView.class]) {
 
             ((UITextView *)selectedView).text =
                 replacement;
 
-            propertyName = @"text";
+            propertyName =
+                @"text";
 
         } else if ([selectedView isKindOfClass:UIButton.class]) {
 
@@ -859,7 +778,8 @@
                 setTitle:replacement
                 forState:UIControlStateNormal];
 
-            propertyName = @"title";
+            propertyName =
+                @"title";
 
         } else {
 
@@ -887,7 +807,7 @@
         [self.profile addChange:change];
 
         [self.tableView reloadData];
-    }];
+    }]];
 
     [self presentViewController:alert
                        animated:YES
@@ -898,7 +818,8 @@
 
 - (void)toggleHidden {
 
-    UIView *view = self.selectedView;
+    UIView *view =
+        self.selectedView;
 
     if (!view) {
         return;
@@ -937,7 +858,8 @@
 
 - (void)changeAlignment {
 
-    UIView *view = self.selectedView;
+    UIView *view =
+        self.selectedView;
 
     if (!view) {
         return;
@@ -974,10 +896,6 @@
         @"Justified"
     ];
 
-    /*
-     * NSTextAlignment values are not guaranteed to equal the
-     * visual menu indexes. Keep an explicit mapping.
-     */
     NSArray<NSNumber *> *values = @[
         @(NSTextAlignmentNatural),
         @(NSTextAlignmentLeft),
@@ -1063,7 +981,7 @@
             [self.profile addChange:change];
 
             [self.tableView reloadData];
-        }];
+        }]];
     }
 
     [alert addAction:
@@ -1080,16 +998,13 @@
         popover.sourceView =
             self.tableView;
 
-        CGRect sourceRect =
+        popover.sourceRect =
             CGRectMake(
                 CGRectGetMidX(self.tableView.bounds),
                 CGRectGetMidY(self.tableView.bounds),
                 1.0,
                 1.0
             );
-
-        popover.sourceRect =
-            sourceRect;
     }
 
     [self presentViewController:alert
@@ -1101,7 +1016,8 @@
 
 - (void)changeFrame {
 
-    UIView *view = self.selectedView;
+    UIView *view =
+        self.selectedView;
 
     if (!view) {
         return;
@@ -1191,10 +1107,6 @@
         change.propertyName =
             @"frame";
 
-        /*
-         * Store the original frame so resetPreview can actually
-         * restore the view.
-         */
         change.originalValue =
             NSStringFromCGRect(oldFrame);
 
@@ -1207,7 +1119,7 @@
         [self.profile addChange:change];
 
         [self.tableView reloadData];
-    }];
+    }]];
 
     [self presentViewController:alert
                        animated:YES
@@ -1266,10 +1178,12 @@
         UILabel *label =
             [[UILabel alloc]
                 initWithFrame:
-                    CGRectMake(10.0,
-                               10.0,
-                               200.0,
-                               30.0)];
+                    CGRectMake(
+                        10.0,
+                        10.0,
+                        200.0,
+                        30.0
+                    )];
 
         label.text =
             text;
@@ -1306,7 +1220,7 @@
         [self.profile addChange:change];
 
         [self.tableView reloadData];
-    }];
+    }]];
 
     [self presentViewController:alert
                        animated:YES
