@@ -76,12 +76,18 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 /*
  * MRzefv live-selection handoff.
  *
- * MRzefv temporarily gives control back to the Explorer.
- * The Explorer performs the actual hit-testing and selection.
+ * MRzefv never performs its own hit-testing.
  *
- * Once setSelectedView: receives a real selection, this completion
- * is fired on the next main-run-loop turn so the MRzefv editor can
- * return to the foreground with the selected UIView.
+ * Instead:
+ *
+ *   1. MRzefv asks the Explorer to begin selection.
+ *   2. Explorer dismisses the currently presented tool.
+ *   3. Explorer enters the existing Select mode.
+ *   4. The normal Explorer selection recognizer handles the tap.
+ *   5. setSelectedView: receives the canonical UIView.
+ *   6. The pending callback is fired on the next main-loop turn.
+ *
+ * The callback is cleared after firing or cancellation.
  */
 @property (nonatomic, copy, nullable)
     void (^pendingLiveSelectionCompletion)(UIView *selectedView);
@@ -163,13 +169,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [self setupToolbarGestures];
 
     /*
-     * IMPORTANT:
-     *
      * This remains the ONLY live-view selection recognizer.
      *
-     * MRzefv does not perform its own hit-testing. When MRzefv
-     * wants a live view, it calls beginLiveViewSelectionWithCompletion:
-     * and temporarily hands control back to this Explorer.
+     * MRzefv uses this existing Explorer selection pipeline.
      */
     UITapGestureRecognizer *selectionTapGR =
         [[UITapGestureRecognizer alloc]
@@ -217,24 +219,22 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     NSParameterAssert(completion != nil);
 
     /*
-     * There should only be one external selection request.
      * Replace any stale request.
      */
     self.pendingLiveSelectionCompletion =
         [completion copy];
 
     /*
-     * Clear the old selection BEFORE enabling Select mode.
-     *
-     * This allows the user to select the exact same UIView again.
+     * Clear the previous selection so the user can select
+     * the exact same UIView again.
      */
     self.selectedView = nil;
 
     /*
-     * The MRzefv editor is normally presented modally.
+     * MRzefv is normally presented over the Explorer.
      *
-     * Dismiss the editor first so the application's actual view
-     * hierarchy receives the next tap.
+     * Dismiss the presented editor/tool first. Once dismissal
+     * finishes, activate the existing Explorer Select mode.
      */
     void (^activateSelection)(void) = ^{
 
@@ -258,6 +258,17 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 
         activateSelection();
     }
+}
+
+- (void)cancelPendingLiveViewSelection {
+
+    /*
+     * The one-shot callback is intentionally just discarded.
+     *
+     * The current MRzefv API uses a one-argument completion,
+     * therefore there is no cancellation result to deliver.
+     */
+    self.pendingLiveSelectionCompletion = nil;
 }
 
 #pragma mark - Rotation
@@ -468,10 +479,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [self updateButtonStates];
 
     /*
-     * Canonical selection notification.
-     *
-     * Every consumer, including MRzefv, receives the same UIView
-     * selected by the existing Explorer.
+     * Canonical Explorer selection notification.
      */
     [[NSNotificationCenter defaultCenter]
         postNotificationName:
@@ -483,11 +491,10 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     }];
 
     /*
-     * Complete a pending MRzefv selection request only for an actual
-     * non-nil selection.
+     * Complete the MRzefv request only for an actual selection.
      *
-     * The callback is deferred one main-loop turn so the Explorer's
-     * overlay/toolbar state is fully updated first.
+     * Defer one main-run-loop turn so the Explorer has finished
+     * updating its overlay and toolbar before MRzefv returns.
      */
     if (selectedView &&
         self.pendingLiveSelectionCompletion) {
@@ -540,16 +547,12 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     }
 
     /*
-     * Leaving Select mode cancels an outstanding MRzefv request.
-     *
-     * The normal MRzefv flow will not hit this path until selection
-     * has completed, but this prevents a stale callback if the user
-     * manually exits Select mode.
+     * Leaving Select mode cancels any pending MRzefv request.
      */
     if (_currentMode == AVX512ExplorerModeSelect &&
         currentMode != AVX512ExplorerModeSelect) {
 
-        self.pendingLiveSelectionCompletion = nil;
+        [self cancelPendingLiveViewSelection];
     }
 
     _currentMode = currentMode;
@@ -901,7 +904,11 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 - (void)closeButtonTapped:
     (AVX512ExplorerToolbarItem *)sender {
 
-    self.pendingLiveSelectionCompletion = nil;
+    /*
+     * Explicitly cancel any MRzefv request before leaving
+     * the Explorer.
+     */
+    [self cancelPendingLiveViewSelection];
 
     self.currentMode =
         AVX512ExplorerModeDefault;
@@ -1357,17 +1364,21 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     switch (panGR.state) {
 
         case UIGestureRecognizerStateBegan:
+
             self.toolbarFrameBeforeDragging =
                 self.explorerToolbar.frame;
 
             [self
                 updateToolbarPositionWithDragGesture:panGR];
+
             break;
 
         case UIGestureRecognizerStateChanged:
         case UIGestureRecognizerStateEnded:
+
             [self
                 updateToolbarPositionWithDragGesture:panGR];
+
             break;
 
         default:
@@ -1708,12 +1719,10 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         newOutlineViewsForVisibleViews;
 
     /*
-     * This is the ONLY selection operation.
+     * Canonical Explorer selection.
      *
-     * MRzefv receives the resulting UIView through:
-     *
-     *   1. AVX512ExplorerSelectedViewDidChangeNotification
-     *   2. pendingLiveSelectionCompletion
+     * This is the only place where a live tap is converted
+     * into the selected UIView.
      */
     self.selectedView =
         [self
@@ -1851,6 +1860,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
             );
 
         if (subviewContainsPoint) {
+
             [subviewsAtPoint
                 addObject:subview];
         }
@@ -2009,8 +2019,8 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                   fromView:nil];
 
     /*
-     * When MRzefv is temporarily dismissed, there is no presented
-     * controller and Select mode receives the touch.
+     * If a modal tool is still presented, allow the presented
+     * hierarchy to decide whether the point belongs to it.
      */
     if (self.presentedViewController) {
 
@@ -2225,7 +2235,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     if (self.currentMode ==
         AVX512ExplorerModeSelect) {
 
-        self.pendingLiveSelectionCompletion = nil;
+        [self cancelPendingLiveViewSelection];
 
         self.currentMode =
             AVX512ExplorerModeDefault;
