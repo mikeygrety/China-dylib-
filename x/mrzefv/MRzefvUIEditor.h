@@ -10,6 +10,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+#pragma mark - MRzefv UI Change
+
 typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
     MRzefvUIChangeTypeText = 0,
     MRzefvUIChangeTypeHidden,
@@ -34,11 +36,15 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 
 @end
 
+#pragma mark - MRzefv UI Profile
+
 @interface MRzefvUIProfile : NSObject
 
 @property (nonatomic, copy) NSString *format;
 @property (nonatomic) NSUInteger version;
-@property (nonatomic, strong) NSMutableArray<MRzefvUIChange *> *changes;
+
+@property (nonatomic, strong)
+    NSMutableArray<MRzefvUIChange *> *changes;
 
 - (void)addChange:(MRzefvUIChange *)change;
 - (void)removeChange:(MRzefvUIChange *)change;
@@ -49,22 +55,55 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 
 @end
 
+#pragma mark - MRzefv UI Editor
+
 @interface MRzefvUIEditorController : UITableViewController
 
-@property (nonatomic, strong, readonly) MRzefvUIProfile *profile;
+@property (nonatomic, strong, readonly)
+    MRzefvUIProfile *profile;
 
-/// The exact UIView selected by AVX512/FLEX's existing Select tool.
-@property (nonatomic, weak, nullable) UIView *selectedView;
+/**
+ * The exact UIView returned by FLEX's existing live
+ * selection system.
+ *
+ * MRzefv does not perform its own hit-testing or install
+ * another selection gesture recognizer.
+ */
+@property (nonatomic, weak, nullable)
+    UIView *selectedView;
 
-/// Starts the existing AVX512/FLEX live-view selector.
-///
-/// MRzefv temporarily hands selection control to the Explorer.
-/// The Explorer either returns a selected UIView or reports cancellation.
-/// The editor is then presented again in either case.
+/**
+ * Hands live selection to FLEX's existing Explorer.
+ *
+ * FLEX owns the selection gesture, hit-testing, and
+ * selection overlay. When selection completes, FLEX
+ * invokes its live-selection completion with either:
+ *
+ *   selectedView != nil
+ *       Successful UIView selection.
+ *
+ *   selectedView == nil
+ *       Selection cancelled.
+ *
+ * The MRzefv editor is then restored.
+ */
 - (void)beginViewSelection;
 
+/**
+ * Starts the live preview workflow for the current
+ * selected view.
+ */
 - (void)beginPreview;
+
+/**
+ * Restores the current selected view and clears
+ * the recorded profile changes.
+ */
 - (void)resetPreview;
+
+/**
+ * Serializes and saves the current MRzefv profile.
+ */
 - (void)saveCurrentProfile;
 
 @end
