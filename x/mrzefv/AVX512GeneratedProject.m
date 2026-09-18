@@ -1,1122 +1,850 @@
 //
 //  AVX512GeneratedProject.m
-//  AVX512 / MRzefv
+//  AVX512
 //
-//  Converts recorded AVX512 edit operations into an isolated
-//  MRzefvGenerated build project.
+//  AVX512 / MRzefv generated Objective-C dylib project builder.
 //
-//  This file runs inside AVX512.
-//  It is NOT compiled into MRzefvGenerated.dylib.
-//
-
-#import <Foundation/Foundation.h>
+#import "AVX512GeneratedProject.h"
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
-
-#pragma mark - Operation Compatibility
-
-typedef NS_ENUM(NSInteger, AVX512GeneratedOperationType) {
-AVX512GeneratedOperationMove = 0,
-AVX512GeneratedOperationResize,
-AVX512GeneratedOperationReplaceText,
-AVX512GeneratedOperationAddText,
-AVX512GeneratedOperationSetHidden,
-AVX512GeneratedOperationReplaceImage
-};
-
-@interface AVX512GeneratedOperation : NSObject
-
-@property (nonatomic, assign) NSInteger type;
-@property (nonatomic, copy) NSString *className;
-@property (nonatomic, copy) NSString *viewPath;
-@property (nonatomic, strong) NSDictionary *values;
-
-@end
-
-@implementation AVX512GeneratedOperation
-@end
-
-#pragma mark - Generator Interface
-
-@interface AVX512GeneratedProject : NSObject
-@end
-
-@interface AVX512GeneratedProject ()
-
-* (NSURL *)projectDirectoryForSession:(NSString *)sessionID
-    target:(NSString *)target
-    error:(NSError **)error;
-* (NSString *)headerSourceForTarget:(NSString *)target
-    sessionID:(NSString *)sessionID;
-* (NSString *)implementationSourceForTarget:(NSString *)target
-    sessionID:(NSString *)sessionID
-    className:(NSString *)className
-    operations:(NSArray *)operations;
-* (NSString *)manifestForTarget:(NSString *)target
-    sessionID:(NSString *)sessionID
-    className:(NSString *)className
-    operations:(NSArray *)operations;
-* (NSString *)buildScript;
-* (NSString *)workflow;
-* (BOOL)writeString:(NSString *)string
-    toURL:(NSURL *)url
-    error:(NSError **)error;
-* (NSString *)sessionIdentifier;
-* (NSString *)objcString:(NSString *)value;
-* (id)operationValue:(id)operation
-    key:(NSString *)key;
-* (NSInteger)operationType:(id)operation;
-* (NSString *)operationClassName:(id)operation
-    fallback:(NSString *)fallback;
-* (NSString *)operationViewPath:(id)operation;
-* (NSDictionary *)operationValues:(id)operation;
-* (id)fail:(NSError **)error
-    code:(NSInteger)code
-    reason:(NSString *)reason;
-
-@end
-
-#pragma mark - Implementation
-
-@implementation AVX512GeneratedProject
-
-#pragma mark - Public
-
-* (NSURL *)generateProjectWithTargetView:(UIView *)targetView
-    operations:(NSArray *)operations
-    error:(NSError **)error
-    {
-    if (!targetView) {
-    return [self fail:error
-    code:1
-    reason:@“No target view was supplied.”];
+static NSString * const AVX512GeneratedProjectErrorDomain =
+    @"com.delvek.avx512.generated-project";
+#pragma mark - Helpers
+static NSString *AVX512UUID(void)
+{
+    return [[NSUUID UUID].UUIDString lowercaseString];
+}
+static NSString *AVX512JSONObjectString(id object)
+{
+    if (!object) {
+        return @"null";
     }
-    if (![operations isKindOfClass:[NSArray class]] ||
-    operations.count == 0) {
-    return [self fail:error
-    code:2
-    reason:@“No edit operations were recorded.”];
-    }
-    /*
-    * ONE UUID PER GENERATION.
-    * This exact value is reused by every generated artifact.
-        */
-        NSString *sessionID = [self sessionIdentifier];
-    NSString *targetName = @“MRzefvGenerated”;
-    NSURL *root =
-    [self projectDirectoryForSession:sessionID
-    target:targetName
-    error:error];
-    if (!root) {
-    return nil;
-    }
-    NSFileManager *fm =
-    [NSFileManager defaultManager];
-    NSURL *sources =
-    [root URLByAppendingPathComponent:@“Sources”
-    isDirectory:YES];
-    NSURL *workflows =
-    [root URLByAppendingPathComponent:@”.github/workflows”
-    isDirectory:YES];
-    if (![fm createDirectoryAtURL:sources
-    withIntermediateDirectories:YES
-    attributes:nil
-    error:error]) {
-    return nil;
-    }
-    if (![fm createDirectoryAtURL:workflows
-    withIntermediateDirectories:YES
-    attributes:nil
-    error:error]) {
-    return nil;
-    }
-    NSString *className =
-    NSStringFromClass([targetView class]);
-    if (className.length == 0) {
-    className = @“UIView”;
-    }
-    NSLog(@”[AVX512] Generating MRzefv project”);
-    NSLog(@”[AVX512] Session: %@”, sessionID);
-    NSLog(@”[AVX512] Target: %@”, className);
-    NSLog(@”[AVX512] Operations: %lu”,
-    (unsigned long)operations.count);
-    NSString *header =
-    [self headerSourceForTarget:targetName
-    sessionID:sessionID];
-    NSString *implementation =
-    [self implementationSourceForTarget:targetName
-    sessionID:sessionID
-    className:className
-    operations:operations];
-    NSString *manifest =
-    [self manifestForTarget:targetName
-    sessionID:sessionID
-    className:className
-    operations:operations];
-    NSString *buildScript =
-    [self buildScript];
-    NSString *workflow =
-    [self workflow];
-    NSURL *headerURL =
-    [sources URLByAppendingPathComponent:@“MRzefvGenerated.h”];
-    NSURL *implementationURL =
-    [sources URLByAppendingPathComponent:@“MRzefvGenerated.m”];
-    NSURL *manifestURL =
-    [root URLByAppendingPathComponent:@“manifest.json”];
-    NSURL *buildURL =
-    [root URLByAppendingPathComponent:@“build.sh”];
-    NSURL *workflowURL =
-    [workflows
-    URLByAppendingPathComponent:@“build-mrzefv-generated.yml”];
-    if (![self writeString:header
-    toURL:headerURL
-    error:error]) {
-    return nil;
-    }
-    if (![self writeString:implementation
-    toURL:implementationURL
-    error:error]) {
-    return nil;
-    }
-    if (![self writeString:manifest
-    toURL:manifestURL
-    error:error]) {
-    return nil;
-    }
-    if (![self writeString:buildScript
-    toURL:buildURL
-    error:error]) {
-    return nil;
-    }
-    if (![self writeString:workflow
-    toURL:workflowURL
-    error:error]) {
-    return nil;
-    }
-    /*
-    * Make build.sh executable.
-        */
-        [fm setAttributes:@{
-        NSFilePosixPermissions : @0755
-        }
-        ofItemAtPath:buildURL.path
-        error:nil];
-    /*
-    * Generation receipt.
-    * IMPORTANT:
-    * Same sessionID as manifest.json.
-        */
-        NSDictionary *receipt = @{
-        @“generator” : @“AVX512/MRzefv”,
-        @“target” : targetName,
-        @“sessionID” : sessionID,
-        @“className” : className,
-        @“operationCount” : @(operations.count),
-        @“status” : @“generated”
-        };
-    NSError *jsonError = nil;
-    NSData *receiptData =
-    [NSJSONSerialization
-    dataWithJSONObject:receipt
-    options:NSJSONWritingPrettyPrinted
-    error:&jsonError];
-    if (!receiptData) {
-    if (error) {
-    *error = jsonError;
-    }
-
-  return nil;
-
-    }
-    NSURL *receiptURL =
-    [root
-    URLByAppendingPathComponent:@“generation-receipt.json”];
-    if (![receiptData writeToURL:receiptURL
-    options:NSDataWritingAtomic
-    error:error]) {
-    return nil;
-    }
-    NSLog(@”[AVX512] Generated project:”);
-    NSLog(@”%@”, root.path);
-    return root;
-    }
-
-#pragma mark - Project Directory
-
-* (NSURL *)projectDirectoryForSession:(NSString *)sessionID
-    target:(NSString *)target
-    error:(NSError **)error
-    {
-    NSFileManager *fm =
-    [NSFileManager defaultManager];
-    NSURL *documents =
-    [fm URLsForDirectory:NSDocumentDirectory
-    inDomains:NSUserDomainMask].firstObject;
-    if (!documents) {
-    return [self fail:error
-    code:10
-    reason:@“Unable to locate Documents directory.”];
-    }
-    NSURL *buildRoot =
-    [documents
-    URLByAppendingPathComponent:@“AVX512/Generated”
-    isDirectory:YES];
-    NSURL *sessionRoot =
-    [buildRoot
-    URLByAppendingPathComponent:sessionID
-    isDirectory:YES];
-    NSURL *project =
-    [sessionRoot
-    URLByAppendingPathComponent:target
-    isDirectory:YES];
-    if (![fm createDirectoryAtURL:project
-    withIntermediateDirectories:YES
-    attributes:nil
-    error:error]) {
-    return nil;
-    }
-    return project;
-    }
-
-#pragma mark - Header Generation
-
-* (NSString *)headerSourceForTarget:(NSString *)target
-    sessionID:(NSString *)sessionID
-    {
-    NSMutableString *source =
-    [NSMutableString string];
-    [source appendString:
-    @”//\n”
-    @”// MRzefvGenerated.h\n”
-    @”// Generated by AVX512 / MRzefv\n”
-    @”//\n”
-    @”\n”
-    @”#ifndef MRzefvGenerated_h\n”
-    @”#define MRzefvGenerated_h\n”
-    @”\n”
-    @”#import <Foundation/Foundation.h>\n”
-    @”#import <UIKit/UIKit.h>\n”
-    @”\n”];
-    [source appendFormat:
-    @”// Session: %@\n”
-    @”// Target: %@\n”
-    @”\n”,
-    [self objcString:sessionID],
-    [self objcString:target]];
-    [source appendString:
-    @“FOUNDATION_EXPORT NSString * const MRzefvGeneratedSessionID;\n”
-    @“FOUNDATION_EXPORT NSString * const MRzefvGeneratedGenerator;\n”
-    @“FOUNDATION_EXPORT NSString * const MRzefvGeneratedTarget;\n”
-    @”\n”
-    @“FOUNDATION_EXPORT void MRzefvGeneratedInitialize(void);\n”
-    @“FOUNDATION_EXPORT NSString *MRzefvGeneratedBuildID(void);\n”
-    @”\n”
-    @”#endif\n”];
-    return source;
-    }
-
-#pragma mark - Generated Objective-C
-
-* (NSString *)implementationSourceForTarget:(NSString *)target
-    sessionID:(NSString *)sessionID
-    className:(NSString *)className
-    operations:(NSArray *)operations
-    {
-    NSMutableString *source =
-    [NSMutableString string];
-    [source appendString:
-    @”//\n”
-    @”// MRzefvGenerated.m\n”
-    @”// Generated by AVX512 / MRzefv\n”
-    @”//\n”
-    @”\n”
-    @”#import "MRzefvGenerated.h"\n”
-    @”#import <objc/runtime.h>\n”
-    @”\n”];
-    [source appendFormat:
-    @“NSString * const MRzefvGeneratedSessionID = @"%@";\n”,
-    [self objcString:sessionID]];
-    [source appendString:
-    @“NSString * const MRzefvGeneratedGenerator = @"AVX512/MRzefv";\n”
-    @“NSString * const MRzefvGeneratedTarget = @"MRzefvGenerated";\n”
-    @”\n”
-    @“static BOOL MRzefvGeneratedDidInitialize = NO;\n”
-    @”\n”
-    @“static UIView *MRzefvFindViewInTree(UIView *root, Class targetClass);\n”
-    @“static UIView *MRzefvFindTargetView(void);\n”
-    @“static void MRzefvApplyOperations(UIView *view);\n”
-    @”\n”];
-    /*
-    * Target class.
-        */
-        [source appendString:
-        @“static UIView *MRzefvFindTargetView(void)\n”
-        @”{\n”
-        @”    Class targetClass = NSClassFromString(@"”];
-    [source appendString:
-    [self objcString:className]];
-    [source appendString:
-    @”");\n”
-    @”\n”
-    @”    if (!targetClass) {\n”
-    @”        return nil;\n”
-    @”    }\n”
-    @”\n”
-    @”    UIApplication *application = UIApplication.sharedApplication;\n”
-    @”\n”
-    @”    for (UIScene *scene in application.connectedScenes) {\n”
-    @”        if (![scene isKindOfClass:[UIWindowScene class]]) {\n”
-    @”            continue;\n”
-    @”        }\n”
-    @”\n”
-    @”        UIWindowScene *windowScene = (UIWindowScene *)scene;\n”
-    @”\n”
-    @”        for (UIWindow *window in windowScene.windows) {\n”
-    @”            UIView *found = MRzefvFindViewInTree(window, targetClass);\n”
-    @”\n”
-    @”            if (found) {\n”
-    @”                return found;\n”
-    @”            }\n”
-    @”        }\n”
-    @”    }\n”
-    @”\n”
-    @”    return nil;\n”
-    @”}\n”
-    @”\n”
-    @“static UIView *MRzefvFindViewInTree(UIView *root, Class targetClass)\n”
-    @”{\n”
-    @”    if (!root || !targetClass) {\n”
-    @”        return nil;\n”
-    @”    }\n”
-    @”\n”
-    @”    if ([root isKindOfClass:targetClass]) {\n”
-    @”        return root;\n”
-    @”    }\n”
-    @”\n”
-    @”    for (UIView *child in root.subviews) {\n”
-    @”        UIView *found = MRzefvFindViewInTree(child, targetClass);\n”
-    @”\n”
-    @”        if (found) {\n”
-    @”            return found;\n”
-    @”        }\n”
-    @”    }\n”
-    @”\n”
-    @”    return nil;\n”
-    @”}\n”
-    @”\n”];
-    /*
-    * Apply recorded operations.
-        */
-        [source appendString:
-        @“static void MRzefvApplyOperations(UIView *view)\n”
-        @”{\n”
-        @”    if (!view) {\n”
-        @”        return;\n”
-        @”    }\n”
-        @”\n”];
-    for (id operation in operations) {
-
-  NSInteger type =
-      [self operationType:operation];
-  NSDictionary *values =
-      [self operationValues:operation];
-  switch (type) {
-      case AVX512GeneratedOperationMove: {
-          CGFloat x =
-              [values[@"x"] doubleValue];
-          CGFloat y =
-              [values[@"y"] doubleValue];
-          [source appendFormat:
-              @"    {\n"
-               @"        CGRect frame = view.frame;\n"
-               @"        frame.origin = CGPointMake(%g, %g);\n"
-               @"        view.frame = frame;\n"
-               @"    }\n",
-              x,
-              y];
-          break;
-      }
-      case AVX512GeneratedOperationResize: {
-          CGFloat width =
-              [values[@"width"] doubleValue];
-          CGFloat height =
-              [values[@"height"] doubleValue];
-          [source appendFormat:
-              @"    {\n"
-               @"        CGRect bounds = view.bounds;\n"
-               @"        bounds.size = CGSizeMake(%g, %g);\n"
-               @"        view.bounds = bounds;\n"
-               @"    }\n",
-              width,
-              height];
-          break;
-      }
-      case AVX512GeneratedOperationReplaceText: {
-          NSString *text =
-              values[@"text"];
-          if (![text isKindOfClass:[NSString class]]) {
-              text = @"";
-          }
-          [source appendFormat:
-              @"    if ([view respondsToSelector:@selector(setText:)]) {\n"
-               @"        [(id)view setText:@\"%@\"];\n"
-               @"    }\n",
-              [self objcString:text]];
-          break;
-      }
-      case AVX512GeneratedOperationAddText: {
-          NSString *text =
-              values[@"text"];
-          if (![text isKindOfClass:[NSString class]]) {
-              text = @"";
-          }
-          [source appendFormat:
-              @"    {\n"
-               @"        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 160, 40)];\n"
-               @"        label.text = @\"%@\";\n"
-               @"        label.numberOfLines = 0;\n"
-               @"        [view addSubview:label];\n"
-               @"    }\n",
-              [self objcString:text]];
-          break;
-      }
-      case AVX512GeneratedOperationSetHidden: {
-          BOOL hidden =
-              [values[@"hidden"] boolValue];
-          [source appendFormat:
-              @"    view.hidden = %@;\n",
-              hidden ? @"YES" : @"NO"];
-          break;
-      }
-      case AVX512GeneratedOperationReplaceImage: {
-          NSString *resource =
-              values[@"resource"];
-          if (![resource isKindOfClass:[NSString class]]) {
-              resource = @"";
-          }
-          [source appendFormat:
-              @"    {\n"
-               @"        UIImage *image = [UIImage imageNamed:@\"%@\"];\n"
-               @"        if (image && [view respondsToSelector:@selector(setImage:)]) {\n"
-               @"            [(id)view setImage:image];\n"
-               @"        }\n"
-               @"    }\n",
-              [self objcString:resource]];
-          break;
-      }
-      default:
-          break;
-  }
-
-    }
-    [source appendString:
-    @”}\n”
-    @”\n”
-    @“void MRzefvGeneratedInitialize(void)\n”
-    @”{\n”
-    @”    if (MRzefvGeneratedDidInitialize) {\n”
-    @”        return;\n”
-    @”    }\n”
-    @”\n”
-    @”    MRzefvGeneratedDidInitialize = YES;\n”
-    @”\n”
-    @”    dispatch_async(dispatch_get_main_queue(), ^{\n”
-    @”        UIView *target = MRzefvFindTargetView();\n”
-    @”\n”
-    @”        if (!target) {\n”
-    @”            NSLog(@"[MRzefvGenerated] Target view not found");\n”
-    @”            return;\n”
-    @”        }\n”
-    @”\n”
-    @”        MRzefvApplyOperations(target);\n”
-    @”    });\n”
-    @”}\n”
-    @”\n”
-    @“NSString *MRzefvGeneratedBuildID(void)\n”
-    @”{\n”
-    @”    return MRzefvGeneratedSessionID;\n”
-    @”}\n”
-    @”\n”
-    @”attribute((constructor))\n”
-    @“static void MRzefvGeneratedConstructor(void)\n”
-    @”{\n”
-    @”    @autoreleasepool {\n”
-    @”        MRzefvGeneratedInitialize();\n”
-    @”    }\n”
-    @”}\n”];
-    return source;
-    }
-
-#pragma mark - Manifest
-
-* (NSString *)manifestForTarget:(NSString *)target
-    sessionID:(NSString *)sessionID
-    className:(NSString *)className
-    operations:(NSArray *)operations
-    {
-    NSMutableArray *manifestOperations =
-    [NSMutableArray arrayWithCapacity:operations.count];
-    for (id operation in operations) {
-
-  NSDictionary *entry = @{
-      @"type" :
-          @([self operationType:operation]),
-      @"className" :
-          [self operationClassName:operation
-                          fallback:className],
-      @"viewPath" :
-          [self operationViewPath:operation],
-      @"values" :
-          [self operationValues:operation]
-  };
-  [manifestOperations addObject:entry];
-
-    }
-    NSDictionary *manifest = @{
-    @“formatVersion” : @1,
-
-  @"generator" : @{
-      @"name" : @"AVX512",
-      @"product" : @"MRzefv",
-      @"version" : @"1.0.0"
-  },
-  @"build" : @{
-      @"target" : target,
-      @"sessionID" : sessionID,
-      @"architecture" : @[
-          @"arm64",
-          @"arm64e"
-      ],
-      @"minimumIOSVersion" : @"15.0"
-  },
-  @"target" : @{
-      @"className" : className
-  },
-  @"operations" :
-      manifestOperations,
-  @"resources" : @[],
-  @"integrity" : @{
-      @"sourceHash" : @"__GENERATED_BY_BUILD__",
-      @"manifestHash" : @"__GENERATED_BY_BUILD__"
-  }
-
-    };
     NSError *error = nil;
-    NSData *data =
-    [NSJSONSerialization
-    dataWithJSONObject:manifest
-    options:NSJSONWritingPrettyPrinted
-    error:&error];
-    if (!data) {
-    NSLog(@”[AVX512] Manifest error: %@”, error);
-    return @”{}”;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:object
+                                                   options:0
+                                                     error:&error];
+    if (!data || error) {
+        return @"null";
     }
-    return
-    [[NSString alloc]
-    initWithData:data
-    encoding:NSUTF8StringEncoding];
+    NSString *result = [[NSString alloc] initWithData:data
+                                             encoding:NSUTF8StringEncoding];
+    return result ?: @"null";
+}
+static NSString *AVX512ObjCString(NSString *value)
+{
+    if (!value) {
+        return @"";
     }
-
-#pragma mark - Build Script
-
-* (NSString *)buildScript
-    {
-    return
-    @”#!/usr/bin/env bash\n”
-    @“set -euo pipefail\n”
-    @”\n”
-    @“ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n”
-    @“cd "$ROOT_DIR"\n”
-    @”\n”
-    @“TARGET_NAME="${OUT_NAME:-MRzefvGenerated}"\n”
-    @“SOURCE_NAME="MRzefvGenerated"\n”
-    @“MIN_IOS_VERSION="${MIN_IOS_VERSION:-15.0}"\n”
-    @“BUILD_DIR="${BUILD_DIR:-build}"\n”
-    @“PACKAGES_DIR="${PACKAGES_DIR:-packages}"\n”
-    @“SOURCE_FILE="Sources/${SOURCE_NAME}.m"\n”
-    @”\n”
-    @“echo "========================================"\n”
-    @“echo " MRzefv Generated Dylib Build"\n”
-    @“echo "========================================"\n”
-    @“echo "Target:       ${TARGET_NAME}"\n”
-    @“echo "Session:      ${MRZEFV_SESSION_ID:-unknown}"\n”
-    @“echo "Build ID:     ${MRZEFV_BUILD_ID:-unknown}"\n”
-    @“echo\n”
-    @”\n”
-    @“command -v xcrun >/dev/null 2>&1 || exit 1\n”
-    @“command -v lipo >/dev/null 2>&1 || exit 1\n”
-    @“command -v otool >/dev/null 2>&1 || exit 1\n”
-    @“command -v zip >/dev/null 2>&1 || exit 1\n”
-    @”\n”
-    @“CLANG="$(xcrun –sdk iphoneos -f clang)"\n”
-    @“SDK="$(xcrun –sdk iphoneos –show-sdk-path)"\n”
-    @“LDID="$(command -v ldid || true)"\n”
-    @”\n”
-    @“if [[ -z "$LDID" ]]; then\n”
-    @”    echo "ERROR: ldid is not installed" >&2\n”
-    @”    exit 1\n”
-    @“fi\n”
-    @”\n”
-    @“if [[ -z "${MRZEFV_SESSION_ID:-}" ]]; then\n”
-    @”    echo "ERROR: MRZEFV_SESSION_ID is not set" >&2\n”
-    @”    exit 1\n”
-    @“fi\n”
-    @”\n”
-    @“if [[ ! -f "$SOURCE_FILE" ]]; then\n”
-    @”    echo "ERROR: $SOURCE_FILE not found" >&2\n”
-    @”    exit 1\n”
-    @“fi\n”
-    @”\n”
-    @“rm -rf "$BUILD_DIR" "$PACKAGES_DIR"\n”
-    @“mkdir -p "$BUILD_DIR/arm64" "$BUILD_DIR/arm64e" "$PACKAGES_DIR"\n”
-    @”\n”
-    @“COMMON_CFLAGS=(\n”
-    @”    -fobjc-arc\n”
-    @”    -fblocks\n”
-    @”    -fmodules\n”
-    @”    -isysroot "$SDK"\n”
-    @”    -miphoneos-version-min="$MIN_IOS_VERSION"\n”
-    @”    -I"$ROOT_DIR/Sources"\n”
-    @”    -Wall\n”
-    @”    -Wextra\n”
-    @”    -Wno-deprecated-declarations\n”
-    @”    -Wno-nullability-completeness\n”
-    @”)\n”
-    @”\n”
-    @“COMMON_LDFLAGS=(\n”
-    @”    -dynamiclib\n”
-    @”    -isysroot "$SDK"\n”
-    @”    -miphoneos-version-min="$MIN_IOS_VERSION"\n”
-    @”    -install_name "@rpath/${TARGET_NAME}.dylib"\n”
-    @”    -Wl,-headerpad_max_install_names\n”
-    @”    -Wl,-search_paths_first\n”
-    @”    -framework Foundation\n”
-    @”    -framework UIKit\n”
-    @”)\n”
-    @”\n”
-    @“echo "[1/7] Compiling arm64"\n”
-    @”"$CLANG" "${COMMON_CFLAGS[@]}" \\n”
-    @”    -arch arm64 \\n”
-    @”    -c "$SOURCE_FILE" \\n”
-    @”    -o "$BUILD_DIR/arm64/${SOURCE_NAME}.o"\n”
-    @”\n”
-    @“echo "[2/7] Linking arm64"\n”
-    @”"$CLANG" "${COMMON_LDFLAGS[@]}" \\n”
-    @”    -arch arm64 \\n”
-    @”    "$BUILD_DIR/arm64/${SOURCE_NAME}.o" \\n”
-    @”    -o "$BUILD_DIR/arm64/${TARGET_NAME}.dylib"\n”
-    @”\n”
-    @“echo "[3/7] Compiling arm64e"\n”
-    @”"$CLANG" "${COMMON_CFLAGS[@]}" \\n”
-    @”    -arch arm64e \\n”
-    @”    -c "$SOURCE_FILE" \\n”
-    @”    -o "$BUILD_DIR/arm64e/${SOURCE_NAME}.o"\n”
-    @”\n”
-    @“echo "[4/7] Linking arm64e"\n”
-    @”"$CLANG" "${COMMON_LDFLAGS[@]}" \\n”
-    @”    -arch arm64e \\n”
-    @”    "$BUILD_DIR/arm64e/${SOURCE_NAME}.o" \\n”
-    @”    -o "$BUILD_DIR/arm64e/${TARGET_NAME}.dylib"\n”
-    @”\n”
-    @“echo "[5/7] Creating universal dylib"\n”
-    @“lipo -create \\n”
-    @”    "$BUILD_DIR/arm64/${TARGET_NAME}.dylib" \\n”
-    @”    "$BUILD_DIR/arm64e/${TARGET_NAME}.dylib" \\n”
-    @”    -output "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”
-    @”\n”
-    @“echo "[6/7] Signing"\n”
-    @”"$LDID" -S "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”
-    @”\n”
-    @“echo "[7/7] Packaging"\n”
-    @“cat > "$PACKAGES_DIR/build-info.json" <<EOF\n”
-    @”{\n”
-    @”  "target": "${TARGET_NAME}",\n”
-    @”  "generator": "AVX512/MRzefv",\n”
-    @”  "sessionID": "${MRZEFV_SESSION_ID}",\n”
-    @”  "buildID": "${MRZEFV_BUILD_ID:-unknown}",\n”
-    @”  "architectures": ["arm64", "arm64e"],\n”
-    @”  "minimumIOSVersion": "${MIN_IOS_VERSION}",\n”
-    @”  "sdk": "iphoneos",\n”
-    @”  "compiler": "Apple Clang",\n”
-    @”  "installName": "@rpath/${TARGET_NAME}.dylib",\n”
-    @”  "signing": "ldid",\n”
-    @”  "status": "built"\n”
-    @”}\n”
-    @“EOF\n”
-    @”\n”
-    @”(\n”
-    @”    cd "$PACKAGES_DIR"\n”
-    @”    zip -q "${TARGET_NAME}.zip" \\n”
-    @”        "${TARGET_NAME}.dylib" \\n”
-    @”        "build-info.json"\n”
-    @”)\n”
-    @”\n”
-    @“echo "========================================"\n”
-    @“echo " BUILD COMPLETE"\n”
-    @“echo "========================================"\n”
-    @“lipo -info "$PACKAGES_DIR/${TARGET_NAME}.dylib"\n”;
-    return script;
+    NSMutableString *result = [NSMutableString stringWithString:value];
+    [result replaceOccurrencesOfString:@"\\"
+                            withString:@"\\\\"
+                               options:0
+                                 range:NSMakeRange(0, result.length)];
+    [result replaceOccurrencesOfString:@"\""
+                            withString:@"\\\""
+                               options:0
+                                 range:NSMakeRange(0, result.length)];
+    [result replaceOccurrencesOfString:@"\n"
+                            withString:@"\\n"
+                               options:0
+                                 range:NSMakeRange(0, result.length)];
+    [result replaceOccurrencesOfString:@"\r"
+                            withString:@"\\r"
+                               options:0
+                                 range:NSMakeRange(0, result.length)];
+    return result;
+}
+static void AVX512AppendLine(NSMutableString *string, NSString *line)
+{
+    [string appendString:line ?: @""];
+    [string appendString:@"\n"];
+}
+static NSError *AVX512Error(NSString *description)
+{
+    return [NSError errorWithDomain:AVX512GeneratedProjectErrorDomain
+                               code:1
+                           userInfo:@{
+                               NSLocalizedDescriptionKey : description
+                           }];
+}
+static BOOL AVX512WriteString(NSString *string,
+                              NSURL *url,
+                              NSError **error)
+{
+    return [string writeToURL:url
+                    atomically:YES
+                      encoding:NSUTF8StringEncoding
+                         error:error];
+}
+static BOOL AVX512WriteData(NSData *data,
+                            NSURL *url,
+                            NSError **error)
+{
+    return [data writeToURL:url
+                    options:NSDataWritingAtomic
+                      error:error];
+}
+#pragma mark - Operation
+@implementation AVX512GeneratedOperation
++ (instancetype)operationWithType:(AVX512GeneratedOperationType)type
+                         className:(NSString *)className
+                          viewPath:(NSString *)viewPath
+                            values:(NSDictionary<NSString *,id> *)values
+{
+    AVX512GeneratedOperation *operation =
+        [[self alloc] init];
+    operation.type = type;
+    operation.className = className;
+    operation.viewPath = viewPath;
+    operation.values = values ?: @{};
+    return operation;
+}
+- (instancetype)init
+{
+    self = [super init];
+    if (self) {
+        _values = @{};
     }
-
-#pragma mark - GitHub Workflow
-
-* (NSString )workflow
-    {
-    return
-    @“name: Build MRzefv Generated Dylib\n”
-    @”\n”
-    @“on:\n”
-    @”  workflow_dispatch:\n”
-    @”    inputs:\n”
-    @”      out_name:\n”
-    @”        description: Output dylib name\n”
-    @”        required: false\n”
-    @”        default: MRzefvGenerated\n”
-    @”  push:\n”
-    @”    branches:\n”
-    @”      - main\n”
-    @”\n”
-    @“permissions:\n”
-    @”  contents: read\n”
-    @”\n”
-    @“jobs:\n”
-    @”  build:\n”
-    @”    name: Build Generated Dylib\n”
-    @”    runs-on: macos-15\n”
-    @”\n”
-    @”    steps:\n”
-    @”      - name: Checkout generated project\n”
-    @”        uses: actions/checkout@v4\n”
-    @”\n”
-    @”      - name: Show Apple toolchain\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”          xcodebuild -version\n”
-    @”          xcrun –sdk iphoneos –show-sdk-path\n”
-    @”          xcrun –sdk iphoneos -f clang\n”
-    @”\n”
-    @”      - name: Install ldid\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”          if ! command -v ldid >/dev/null 2>&1; then\n”
-    @”            brew update\n”
-    @”            brew install ldid\n”
-    @”          fi\n”
-    @”          command -v ldid\n”
-    @”          ldid –version || true\n”
-    @”\n”
-    @”      - name: Validate generated project\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”\n”
-    @”          echo "========================================"\n”
-    @”          echo "VALIDATING GENERATED PROJECT"\n”
-    @”          echo "========================================"\n”
-    @”\n”
-    @”          required_files=(\n”
-    @”            "build.sh"\n”
-    @”            "manifest.json"\n”
-    @”            "Sources/MRzefvGenerated.h"\n”
-    @”            "Sources/MRzefvGenerated.m"\n”
-    @”          )\n”
-    @”\n”
-    @”          for file in "${required_files[@]}"; do\n”
-    @”            if [[ ! -f "$file" ]]; then\n”
-    @”              echo "::error::Missing required file: $file"\n”
-    @”              echo "Repository contents:"\n”
-    @”              find . -maxdepth 5 -type f -print | sort\n”
-    @”              exit 1\n”
-    @”            fi\n”
-    @”            echo "✓ $file"\n”
-    @”          done\n”
-    @”\n”
-    @”          echo "✓ Validation passed"\n”
-    @”\n”
-    @”      - name: Read generated session ID\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”\n”
-    @”          SESSION_ID="$(plutil -extract build.sessionID raw -o - manifest.json)"\n”
-    @”\n”
-    @”          if [[ -z "$SESSION_ID" || "$SESSION_ID" == "null" ]]; then\n”
-    @”            echo "::error::manifest.json does not contain build.sessionID"\n”
-    @”            exit 1\n”
-    @”          fi\n”
-    @”\n”
-    @”          echo "MRZEFV_SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"\n”
-    @”          echo "Session ID: $SESSION_ID"\n”
-    @”\n”
-    @”      - name: Verify generation receipt\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”\n”
-    @”          if [[ -f "generation-receipt.json" ]]; then\n”
-    @”            RECEIPT_SESSION="$(plutil -extract sessionID raw -o - generation-receipt.json)"\n”
-    @”\n”
-    @”            if [[ "$RECEIPT_SESSION" != "$MRZEFV_SESSION_ID" ]]; then\n”
-    @”              echo "::error::Session ID mismatch"\n”
-    @”              echo "Manifest: $MRZEFV_SESSION_ID"\n”
-    @”              echo "Receipt:  $RECEIPT_SESSION"\n”
-    @”              exit 1\n”
-    @”            fi\n”
-    @”\n”
-    @”            echo "✓ Session IDs match"\n”
-    @”          fi\n”
-    @”\n”
-    @”      - name: Set build identity\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”          BUILD_ID="MRZ-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"\n”
-    @”          echo "MRZEFV_BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"\n”
-    @”          echo "Build ID: $BUILD_ID"\n”
-    @”\n”
-    @”      - name: Build generated dylib\n”
-    @”        shell: bash\n”
-    @”        env:\n”
-    @”          OUT_NAME: ${{ github.event.inputs.out_name || ‘MRzefvGenerated’ }}\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”          chmod +x build.sh\n”
-    @”          ./build.sh\n”
-    @”\n”
-    @”      - name: Verify build output\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”\n”
-    @”          [[ -d packages ]] || {\n”
-    @”            echo "::error::packages/ was not produced"\n”
-    @”            exit 1\n”
-    @”          }\n”
-    @”\n”
-    @”          DYLIB="$(find packages -maxdepth 1 -name ".dylib" -type f | head -n 1)"\n”
-    @”          ZIP="$(find packages -maxdepth 1 -name ".zip" -type f | head -n 1)"\n”
-    @”\n”
-    @”          [[ -n "$DYLIB" ]] || {\n”
-    @”            echo "::error::No dylib produced"\n”
-    @”            exit 1\n”
-    @”          }\n”
-    @”\n”
-    @”          [[ -n "$ZIP" ]] || {\n”
-    @”            echo "::error::No ZIP produced"\n”
-    @”            exit 1\n”
-    @”          }\n”
-    @”\n”
-    @”          echo "Dylib: $DYLIB"\n”
-    @”          echo "ZIP:   $ZIP"\n”
-    @”\n”
-    @”      - name: Verify dylib\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”          DYLIB="$(find packages -maxdepth 1 -name ".dylib" -type f | head -n 1)"\n”
-    @”          file "$DYLIB"\n”
-    @”          lipo -info "$DYLIB"\n”
-    @”          otool -D "$DYLIB"\n”
-    @”          otool -L "$DYLIB" || true\n”
-    @”\n”
-    @”      - name: Verify build metadata\n”
-    @”        shell: bash\n”
-    @”        run: |\n”
-    @”          set -euo pipefail\n”
-    @”          BUILD_INFO="packages/build-info.json"\n”
-    @”\n”
-    @”          [[ -f "$BUILD_INFO" ]] || {\n”
-    @”            echo "::error::Missing build-info.json"\n”
-    @”            exit 1\n”
-    @”          }\n”
-    @”\n”
-    @”          BUILD_SESSION="$(plutil -extract sessionID raw -o - "$BUILD_INFO")"\n”
-    @”\n”
-    @”          if [[ "$BUILD_SESSION" != "$MRZEFV_SESSION_ID" ]]; then\n”
-    @”            echo "::error::Session ID mismatch in build-info.json"\n”
-    @”            exit 1\n”
-    @”          fi\n”
-    @”\n”
-    @”          cat "$BUILD_INFO"\n”
-    @”          echo "✓ Build metadata verified"\n”
-    @”\n”
-    @”      - name: Upload dylib\n”
-    @”        uses: actions/upload-artifact@v4\n”
-    @”        with:\n”
-    @”          name: MRzefvGenerated-dylib-${{ github.run_number }}\n”
-    @”          path: packages/.dylib\n”
-    @”          if-no-files-found: error\n”
-    @”          retention-days: 30\n”
-    @”\n”
-    @”      - name: Upload generated ZIP\n”
-    @”        uses: actions/upload-artifact@v4\n”
-    @”        with:\n”
-    @”          name: MRzefvGenerated-package-${{ github.run_number }}\n”
-    @”          path: packages/.zip\n”
-    @”          if-no-files-found: error\n”
-    @”          retention-days: 30\n”
-    @”\n”
-    @”      - name: Upload build metadata\n”
-    @”        if: always()\n”
-    @”        uses: actions/upload-artifact@v4\n”
-    @”        with:\n”
-    @”          name: MRzefvGenerated-metadata-${{ github.run_number }}\n”
-    @”          path: |\n”
-    @”            manifest.json\n”
-    @”            generation-receipt.json\n”
-    @”            packages/build-info.json\n”
-    @”          if-no-files-found: ignore\n”
-    @”          retention-days: 30\n”;
-    return workflow;
+    return self;
+}
+@end
+#pragma mark - Operation Normalization
+static NSDictionary *AVX512OperationDictionary(id operation)
+{
+    if ([operation isKindOfClass:NSDictionary.class]) {
+        return operation;
     }
-
-#pragma mark - Operation Access
-
-* (id)operationValue:(id)operation
-    key:(NSString *)key
-    {
-    if (!operation || key.length == 0) {
+    if ([operation isKindOfClass:AVX512GeneratedOperation.class]) {
+        AVX512GeneratedOperation *op =
+            (AVX512GeneratedOperation *)operation;
+        NSMutableDictionary *dictionary =
+            [NSMutableDictionary dictionary];
+        dictionary[@"type"] = @(op.type);
+        if (op.className) {
+            dictionary[@"className"] = op.className;
+        }
+        if (op.viewPath) {
+            dictionary[@"viewPath"] = op.viewPath;
+        }
+        if (op.values) {
+            dictionary[@"values"] = op.values;
+        }
+        return dictionary;
+    }
     return nil;
-    }
-    /*
-    * Support NSDictionary operations.
-        */
-        if ([operation isKindOfClass:[NSDictionary class]]) {
-        return [(NSDictionary *)operation objectForKey:key];
-        }
-    /*
-    * Support AVX512GeneratedOperation objects.
-        */
-        @try {
-        return [operation valueForKey:key];
-        }
-        @catch (__unused NSException *exception) {
-        return nil;
-        }
-        }
-* (NSInteger)operationType:(id)operation
-    {
-    id value =
-    [self operationValue:operation
-    key:@“type”];
+}
+static NSInteger AVX512OperationTypeFromObject(id value)
+{
     if ([value respondsToSelector:@selector(integerValue)]) {
-    return [value integerValue];
+        return [value integerValue];
+    }
+    if ([value isKindOfClass:NSString.class]) {
+        NSString *name = [(NSString *)value lowercaseString];
+        if ([name isEqualToString:@"move"]) {
+            return AVX512GeneratedOperationTypeMove;
+        }
+        if ([name isEqualToString:@"resize"]) {
+            return AVX512GeneratedOperationTypeResize;
+        }
+        if ([name isEqualToString:@"hide"]) {
+            return AVX512GeneratedOperationTypeHide;
+        }
+        if ([name isEqualToString:@"show"]) {
+            return AVX512GeneratedOperationTypeShow;
+        }
+        if ([name isEqualToString:@"replacetext"]) {
+            return AVX512GeneratedOperationTypeReplaceText;
+        }
+        if ([name isEqualToString:@"addtext"]) {
+            return AVX512GeneratedOperationTypeAddText;
+        }
+        if ([name isEqualToString:@"replaceimage"]) {
+            return AVX512GeneratedOperationTypeReplaceImage;
+        }
     }
     return -1;
+}
+#pragma mark - Generated Header
+static NSString *AVX512GeneratedHeader(NSString *sessionID)
+{
+    NSMutableString *output =
+        [NSMutableString string];
+    AVX512AppendLine(output, @"//");
+    AVX512AppendLine(output, @"// MRzefvGenerated.h");
+    AVX512AppendLine(output, @"// Generated by AVX512.");
+    AVX512AppendLine(output, @"//");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"#import <Foundation/Foundation.h>");
+    AVX512AppendLine(output, @"#import <UIKit/UIKit.h>");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"NS_ASSUME_NONNULL_BEGIN");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"FOUNDATION_EXPORT NSString *MRzefvGeneratedSessionID(void);");
+    AVX512AppendLine(output, @"FOUNDATION_EXPORT void MRzefvGeneratedInitialize(void);");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"NS_ASSUME_NONNULL_END");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output,
+                     [NSString stringWithFormat:
+                      @"// Generation session: %@",
+                      sessionID]);
+    return output;
+}
+#pragma mark - Generated Source
+static NSString *AVX512GeneratedSource(NSString *sessionID,
+                                       NSString *targetClassName,
+                                       NSArray *operations)
+{
+    NSMutableString *output =
+        [NSMutableString string];
+    AVX512AppendLine(output, @"//");
+    AVX512AppendLine(output, @"// MRzefvGenerated.m");
+    AVX512AppendLine(output, @"// Generated by AVX512.");
+    AVX512AppendLine(output, @"//");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"#import \"MRzefvGenerated.h\"");
+    AVX512AppendLine(output, @"#import <objc/runtime.h>");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"static UIView *MRzefvFindViewInTree(UIView *root, Class targetClass);");
+    AVX512AppendLine(output, @"");
+    
+    AVX512AppendLine(output, @"NSString *MRzefvGeneratedSessionID(void)");
+    AVX512AppendLine(output, @"{");
+    AVX512AppendLine(output,
+                     [NSString stringWithFormat:
+                      @"    return @\"%@\";",
+                      AVX512ObjCString(sessionID)]);
+    AVX512AppendLine(output, @"}");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"static UIView *MRzefvFindViewInTree(UIView *root, Class targetClass)");
+    AVX512AppendLine(output, @"{");
+    AVX512AppendLine(output, @"    if (!root || !targetClass) {");
+    AVX512AppendLine(output, @"        return nil;");
+    AVX512AppendLine(output, @"    }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"    if ([root isKindOfClass:targetClass]) {");
+    AVX512AppendLine(output, @"        return root;");
+    AVX512AppendLine(output, @"    }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"    for (UIView *subview in root.subviews) {");
+    AVX512AppendLine(output, @"        UIView *found = MRzefvFindViewInTree(subview, targetClass);");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"        if (found) {");
+    AVX512AppendLine(output, @"            return found;");
+    AVX512AppendLine(output, @"        }");
+    AVX512AppendLine(output, @"    }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"    return nil;");
+    AVX512AppendLine(output, @"}");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"static UIView *MRzefvFindTargetView(void)");
+    AVX512AppendLine(output, @"{");
+    AVX512AppendLine(output,
+                     [NSString stringWithFormat:
+                      @"    Class targetClass = NSClassFromString(@\"%@\");",
+                      AVX512ObjCString(targetClassName)]);
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"    if (!targetClass) {");
+    AVX512AppendLine(output, @"        return nil;");
+    AVX512AppendLine(output, @"    }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {");
+    AVX512AppendLine(output, @"        if (![scene isKindOfClass:UIWindowScene.class]) {");
+    AVX512AppendLine(output, @"            continue;");
+    AVX512AppendLine(output, @"        }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"        UIWindowScene *windowScene = (UIWindowScene *)scene;");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"        for (UIWindow *window in windowScene.windows) {");
+    AVX512AppendLine(output, @"            UIView *found = MRzefvFindViewInTree(window, targetClass);");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"            if (found) {");
+    AVX512AppendLine(output, @"                return found;");
+    AVX512AppendLine(output, @"            }");
+    AVX512AppendLine(output, @"        }");
+    AVX512AppendLine(output, @"    }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"    return nil;");
+    AVX512AppendLine(output, @"}");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"static void MRzefvApplyOperations(UIView *target)");
+    AVX512AppendLine(output, @"{");
+    for (id rawOperation in operations) {
+        NSDictionary *operation =
+            AVX512OperationDictionary(rawOperation);
+        if (!operation) {
+            continue;
+        }
+        NSInteger type =
+            AVX512OperationTypeFromObject(operation[@"type"]);
+        NSDictionary *values =
+            [operation[@"values"] isKindOfClass:NSDictionary.class]
+                ? operation[@"values"]
+                : @{};
+        switch (type) {
+            case AVX512GeneratedOperationTypeMove: {
+                NSString *x = [values[@"x"] description];
+                NSString *y = [values[@"y"] description];
+                if (x && y) {
+                    AVX512AppendLine(
+                        output,
+                        [NSString stringWithFormat:
+                         @"    target.center = CGPointMake(%@, %@);",
+                         x,
+                         y]);
+                }
+                break;
+            }
+            case AVX512GeneratedOperationTypeResize: {
+                NSString *width = [values[@"width"] description];
+                NSString *height = [values[@"height"] description];
+                if (width && height) {
+                    AVX512AppendLine(
+                        output,
+                        [NSString stringWithFormat:
+                         @"    target.frame = CGRectMake(target.frame.origin.x, target.frame.origin.y, %@, %@);",
+                         width,
+                         height]);
+                }
+                break;
+            }
+            case AVX512GeneratedOperationTypeHide:
+                AVX512AppendLine(output,
+                                 @"    target.hidden = YES;");
+                break;
+            case AVX512GeneratedOperationTypeShow:
+                AVX512AppendLine(output,
+                                 @"    target.hidden = NO;");
+                break;
+            case AVX512GeneratedOperationTypeReplaceText: {
+                NSString *text =
+                    [values[@"text"] isKindOfClass:NSString.class]
+                        ? values[@"text"]
+                        : [values[@"text"] description];
+                if (text) {
+                    AVX512AppendLine(
+                        output,
+                        [NSString stringWithFormat:
+                         @"    if ([target respondsToSelector:@selector(setText:)]) {");
+                    AVX512AppendLine(
+                        output,
+                        [NSString stringWithFormat:
+                         @"        [(id)target setText:@\"%@\"];",
+                         AVX512ObjCString(text)]);
+                    AVX512AppendLine(
+                        output,
+                        @"    }");
+                }
+                break;
+            }
+            case AVX512GeneratedOperationTypeAddText: {
+                NSString *text =
+                    [values[@"text"] isKindOfClass:NSString.class]
+                        ? values[@"text"]
+                        : [values[@"text"] description];
+                if (text) {
+                    AVX512AppendLine(output, @"    UILabel *label = [[UILabel alloc] initWithFrame:target.bounds];");
+                    AVX512AppendLine(output, @"    label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;");
+                    AVX512AppendLine(output,
+                                     [NSString stringWithFormat:
+                                      @"    label.text = @\"%@\";",
+                                      AVX512ObjCString(text)]);
+                    AVX512AppendLine(output, @"    label.textAlignment = NSTextAlignmentCenter;");
+                    AVX512AppendLine(output, @"    label.userInteractionEnabled = NO;");
+                    AVX512AppendLine(output, @"    [target addSubview:label];");
+                }
+                break;
+            }
+            case AVX512GeneratedOperationTypeReplaceImage: {
+                NSString *imageName =
+                    [values[@"imageName"] isKindOfClass:NSString.class]
+                        ? values[@"imageName"]
+                        : [values[@"imageName"] description];
+                if (imageName) {
+                    AVX512AppendLine(
+                        output,
+                        @"    if ([target isKindOfClass:UIImageView.class]) {");
+                    AVX512AppendLine(
+                        output,
+                        [NSString stringWithFormat:
+                         @"        ((UIImageView *)target).image = [UIImage imageNamed:@\"%@\"];",
+                         AVX512ObjCString(imageName)]);
+                    AVX512AppendLine(output, @"    }");
+                }
+                break;
+            }
+            default:
+                break;
+        }
     }
-* (NSString *)operationClassName:(id)operation
-    fallback:(NSString *)fallback
-    {
-    id value =
-    [self operationValue:operation
-    key:@“className”];
-    if ([value isKindOfClass:[NSString class]] &&
-    [(NSString *)value length] > 0) {
-    return value;
+    AVX512AppendLine(output, @"}");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"void MRzefvGeneratedInitialize(void)");
+    AVX512AppendLine(output, @"{");
+    AVX512AppendLine(output, @"    dispatch_async(dispatch_get_main_queue(), ^{");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"        for (NSInteger attempt = 0; attempt < 20; attempt++) {");
+    AVX512AppendLine(output, @"            UIView *target = MRzefvFindTargetView();");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"            if (target) {");
+    AVX512AppendLine(output, @"                MRzefvApplyOperations(target);");
+    AVX512AppendLine(output, @"                return;");
+    AVX512AppendLine(output, @"            }");
+    AVX512AppendLine(output, @"");
+    AVX512AppendLine(output, @"            [NSThread sleepForTimeInterval:0.25];");
+    AVX512AppendLine(output, @"        }");
+    AVX512AppendLine(output, @"    });");
+    AVX512AppendLine(output, @"}");
+    AVX512AppendLine(output, @"");
+    __unused NSString *unusedTargetClassName = targetClassName;
+    return output;
+}
+#pragma mark - Manifest
+static NSDictionary *AVX512Manifest(NSString *sessionID,
+                                    NSString *targetClassName,
+                                    NSArray *operations)
+{
+    NSMutableArray *serializedOperations =
+        [NSMutableArray array];
+    for (id rawOperation in operations) {
+        NSDictionary *operation =
+            AVX512OperationDictionary(rawOperation);
+        if (!operation) {
+            continue;
+        }
+        NSMutableDictionary *copy =
+            [operation mutableCopy];
+        id values = copy[@"values"];
+        if (!values) {
+            copy[@"values"] = @{};
+        }
+        [serializedOperations addObject:copy];
     }
-    return fallback ?: @“UIView”;
-    }
-* (NSString *)operationViewPath:(id)operation
-    {
-    id value =
-    [self operationValue:operation
-    key:@“viewPath”];
-    if ([value isKindOfClass:[NSString class]]) {
-    return value;
-    }
-    return @””;
-    }
-* (NSDictionary *)operationValues:(id)operation
-    {
-    id value =
-    [self operationValue:operation
-    key:@“values”];
-    if ([value isKindOfClass:[NSDictionary class]]) {
-    return value;
-    }
-    return @{};
-    }
-
-#pragma mark - File Writing
-
-* (BOOL)writeString:(NSString *)string
-    toURL:(NSURL *)url
-    error:(NSError **)error
-    {
-    if (!string || !url) {
-    if (error) {
-    *error =
-    [NSError
-    errorWithDomain:@“AVX512GeneratedProject”
-    code:20
-    userInfo:@{
-    NSLocalizedDescriptionKey :
-    @“Unable to write generated file.”
-    }];
-    }
-
-  return NO;
-
-    }
+    return @{
+        @"schemaVersion" : @1,
+        @"generator" : @"AVX512/MRzefv",
+        @"build" : @{
+            @"sessionID" : sessionID,
+            @"target" : @"MRzefvGenerated"
+        },
+        @"target" : @{
+            @"className" : targetClassName ?: @"",
+            @"operationCount" : @(serializedOperations.count)
+        },
+        @"operations" : serializedOperations
+    };
+}
+#pragma mark - Build Script
+static NSString *AVX512BuildScript(void)
+{
     return
-    [string writeToURL:url
-    atomically:YES
-    encoding:NSUTF8StringEncoding
-    error:error];
-    }
-
-#pragma mark - Session
-
-* (NSString *)sessionIdentifier
-    {
+    @"#!/usr/bin/env bash\n"
+    @"set -euo pipefail\n"
+    @"\n"
+    @"ROOT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
+    @"cd \"$ROOT_DIR\"\n"
+    @"\n"
+    @"TARGET_NAME=\"${OUT_NAME:-MRzefvGenerated}\"\n"
+    @"MIN_IOS_VERSION=\"${MIN_IOS_VERSION:-15.0}\"\n"
+    @"BUILD_DIR=\"${BUILD_DIR:-build}\"\n"
+    @"PACKAGES_DIR=\"${PACKAGES_DIR:-packages}\"\n"
+    @"SOURCE_DIR=\"${ROOT_DIR}/Sources\"\n"
+    @"SOURCE_FILE=\"${SOURCE_DIR}/${TARGET_NAME}.m\"\n"
+    @"HEADER_FILE=\"${SOURCE_DIR}/${TARGET_NAME}.h\"\n"
+    @"\n"
+    @"fail() {\n"
+    @"    echo \"ERROR: $*\" >&2\n"
+    @"    exit 1\n"
+    @"}\n"
+    @"\n"
+    @"command -v xcrun >/dev/null 2>&1 || fail \"xcrun not found\"\n"
+    @"command -v lipo >/dev/null 2>&1 || fail \"lipo not found\"\n"
+    @"command -v otool >/dev/null 2>&1 || fail \"otool not found\"\n"
+    @"command -v file >/dev/null 2>&1 || fail \"file not found\"\n"
+    @"command -v zip >/dev/null 2>&1 || fail \"zip not found\"\n"
+    @"command -v ldid >/dev/null 2>&1 || fail \"ldid not installed\"\n"
+    @"\n"
+    @"CLANG=\"$(xcrun --sdk iphoneos -f clang)\"\n"
+    @"SDK=\"$(xcrun --sdk iphoneos --show-sdk-path)\"\n"
+    @"\n"
+    @"[[ -f \"$SOURCE_FILE\" ]] || fail \"${SOURCE_FILE} not found\"\n"
+    @"[[ -f \"$HEADER_FILE\" ]] || fail \"${HEADER_FILE} not found\"\n"
+    @"[[ -f \"${ROOT_DIR}/manifest.json\" ]] || fail \"manifest.json not found\"\n"
+    @"\n"
+    @"rm -rf \"$BUILD_DIR\" \"$PACKAGES_DIR\"\n"
+    @"mkdir -p \"$BUILD_DIR/arm64\" \"$BUILD_DIR/arm64e\" \"$PACKAGES_DIR\"\n"
+    @"\n"
+    @"COMMON_CFLAGS=(\n"
+    @"    -fobjc-arc\n"
+    @"    -fblocks\n"
+    @"    -fmodules\n"
+    @"    -isysroot \"$SDK\"\n"
+    @"    -miphoneos-version-min=\"$MIN_IOS_VERSION\"\n"
+    @"    -I\"$SOURCE_DIR\"\n"
+    @"    -Wall\n"
+    @"    -Wextra\n"
+    @")\n"
+    @"\n"
+    @"COMMON_LDFLAGS=(\n"
+    @"    -dynamiclib\n"
+    @"    -isysroot \"$SDK\"\n"
+    @"    -miphoneos-version-min=\"$MIN_IOS_VERSION\"\n"
+    @"    -install_name \"@rpath/${TARGET_NAME}.dylib\"\n"
+    @"    -Wl,-headerpad_max_install_names\n"
+    @"    -framework Foundation\n"
+    @"    -framework UIKit\n"
+    @")\n"
+    @"\n"
+    @"echo \"[1/9] Compiling arm64\"\n"
+    @"\"$CLANG\" \"${COMMON_CFLAGS[@]}\" -arch arm64 -c \"$SOURCE_FILE\" -o \"$BUILD_DIR/arm64/${TARGET_NAME}.o\"\n"
+    @"\n"
+    @"echo \"[2/9] Linking arm64\"\n"
+    @"\"$CLANG\" \"${COMMON_LDFLAGS[@]}\" -arch arm64 \"$BUILD_DIR/arm64/${TARGET_NAME}.o\" -o \"$BUILD_DIR/arm64/${TARGET_NAME}.dylib\"\n"
+    @"\n"
+    @"echo \"[3/9] Compiling arm64e\"\n"
+    @"\"$CLANG\" \"${COMMON_CFLAGS[@]}\" -arch arm64e -c \"$SOURCE_FILE\" -o \"$BUILD_DIR/arm64e/${TARGET_NAME}.o\"\n"
+    @"\n"
+    @"echo \"[4/9] Linking arm64e\"\n"
+    @"\"$CLANG\" \"${COMMON_LDFLAGS[@]}\" -arch arm64e \"$BUILD_DIR/arm64e/${TARGET_NAME}.o\" -o \"$BUILD_DIR/arm64e/${TARGET_NAME}.dylib\"\n"
+    @"\n"
+    @"echo \"[5/9] Creating universal dylib\"\n"
+    @"lipo -create \\\n"
+    @"    \"$BUILD_DIR/arm64/${TARGET_NAME}.dylib\" \\\n"
+    @"    \"$BUILD_DIR/arm64e/${TARGET_NAME}.dylib\" \\\n"
+    @"    -output \"$PACKAGES_DIR/${TARGET_NAME}.dylib\"\n"
+    @"\n"
+    @"echo \"[6/9] Signing with ldid\"\n"
+    @"ldid -S \"$PACKAGES_DIR/${TARGET_NAME}.dylib\"\n"
+    @"\n"
+    @"echo \"[7/9] Writing build metadata\"\n"
+    @"SESSION_ID=\"$(plutil -extract build.sessionID raw -o - manifest.json)\"\n"
+    @"BUILD_ID=\"${MRZEFV_BUILD_ID:-local}\"\n"
+    @"\n"
+    @"cat > \"$PACKAGES_DIR/build-info.json\" <<EOF\n"
+    @"{\n"
+    @"  \"target\": \"${TARGET_NAME}\",\n"
+    @"  \"generator\": \"AVX512/MRzefv\",\n"
+    @"  \"sessionID\": \"${SESSION_ID}\",\n"
+    @"  \"buildID\": \"${BUILD_ID}\",\n"
+    @"  \"architecture\": [\"arm64\", \"arm64e\"],\n"
+    @"  \"minimumIOSVersion\": \"${MIN_IOS_VERSION}\",\n"
+    @"  \"sdk\": \"iphoneos\",\n"
+    @"  \"compiler\": \"Apple Clang\",\n"
+    @"  \"installName\": \"@rpath/${TARGET_NAME}.dylib\",\n"
+    @"  \"signing\": \"ldid\",\n"
+    @"  \"status\": \"built\"\n"
+    @"}\n"
+    @"EOF\n"
+    @"\n"
+    @"echo \"[8/9] Verifying\"\n"
+    @"file \"$PACKAGES_DIR/${TARGET_NAME}.dylib\"\n"
+    @"lipo -info \"$PACKAGES_DIR/${TARGET_NAME}.dylib\"\n"
+    @"otool -D \"$PACKAGES_DIR/${TARGET_NAME}.dylib\"\n"
+    @"\n"
+    @"echo \"[9/9] Creating ZIP\"\n"
+    @"(\n"
+    @"    cd \"$PACKAGES_DIR\"\n"
+    @"    zip -q \"${TARGET_NAME}.zip\" \"${TARGET_NAME}.dylib\" \"build-info.json\"\n"
+    @")\n"
+    @"\n"
+    @"echo \"BUILD COMPLETE\"\n"
+    @"echo \"  packages/${TARGET_NAME}.dylib\"\n"
+    @"echo \"  packages/${TARGET_NAME}.zip\"\n"
+    @"echo \"  packages/build-info.json\"\n";
+}
+#pragma mark - GitHub Actions
+static NSString *AVX512Workflow(void)
+{
     return
-    [NSUUID UUID].UUIDString.lowercaseString;
+    @"name: Build MRzefv Generated Dylib\n"
+    @"\n"
+    @"on:\n"
+    @"  workflow_dispatch:\n"
+    @"  push:\n"
+    @"    branches:\n"
+    @"      - main\n"
+    @"\n"
+    @"jobs:\n"
+    @"  build:\n"
+    @"    runs-on: macos-15\n"
+    @"\n"
+    @"    env:\n"
+    @"      OUT_NAME: ${{ github.event.inputs.out_name || 'MRzefvGenerated' }}\n"
+    @"      MRZEFV_BUILD_ID: MRZ-${{ github.run_id }}-${{ github.run_attempt }}\n"
+    @"\n"
+    @"    steps:\n"
+    @"      - name: Checkout\n"
+    @"        uses: actions/checkout@v4\n"
+    @"\n"
+    @"      - name: Check Apple toolchain\n"
+    @"        run: |\n"
+    @"          xcodebuild -version\n"
+    @"          xcrun --sdk iphoneos --show-sdk-path\n"
+    @"          xcrun --sdk iphoneos -f clang\n"
+    @"          lipo -info \"$(xcrun --sdk iphoneos -f clang)\"\n"
+    @"\n"
+    @"      - name: Install ldid\n"
+    @"        run: |\n"
+    @"          brew install ldid\n"
+    @"          ldid --version || true\n"
+    @"\n"
+    @"      - name: Validate generated project\n"
+    @"        run: |\n"
+    @"          set -e\n"
+    @"          test -f build.sh\n"
+    @"          test -f manifest.json\n"
+    @"          test -f Sources/MRzefvGenerated.h\n"
+    @"          test -f Sources/MRzefvGenerated.m\n"
+    @"          test -f generation-receipt.json\n"
+    @"          echo \"Generated project files OK\"\n"
+    @"          find . -maxdepth 3 -type f | sort\n"
+    @"\n"
+    @"      - name: Verify session ID\n"
+    @"        run: |\n"
+    @"          set -e\n"
+    @"          SESSION_ID=\"$(plutil -extract build.sessionID raw -o - manifest.json)\"\n"
+    @"          RECEIPT_ID=\"$(plutil -extract sessionID raw -o - generation-receipt.json)\"\n"
+    @"          test -n \"$SESSION_ID\"\n"
+    @"          test \"$SESSION_ID\" = \"$RECEIPT_ID\"\n"
+    @"          echo \"Session: $SESSION_ID\"\n"
+    @"\n"
+    @"      - name: Build generated dylib\n"
+    @"        run: |\n"
+    @"          chmod +x build.sh\n"
+    @"          ./build.sh\n"
+    @"\n"
+    @"      - name: Verify artifacts\n"
+    @"        run: |\n"
+    @"          set -e\n"
+    @"          test -f packages/MRzefvGenerated.dylib\n"
+    @"          test -f packages/MRzefvGenerated.zip\n"
+    @"          test -f packages/build-info.json\n"
+    @"          file packages/MRzefvGenerated.dylib\n"
+    @"          lipo -info packages/MRzefvGenerated.dylib\n"
+    @"          otool -D packages/MRzefvGenerated.dylib\n"
+    @"          cat packages/build-info.json\n"
+    @"\n"
+    @"      - name: Upload dylib\n"
+    @"        uses: actions/upload-artifact@v4\n"
+    @"        with:\n"
+    @"          name: MRzefvGenerated-dylib\n"
+    @"          path: packages/MRzefvGenerated.dylib\n"
+    @"\n"
+    @"      - name: Upload ZIP\n"
+    @"        uses: actions/upload-artifact@v4\n"
+    @"        with:\n"
+    @"          name: MRzefvGenerated-package\n"
+    @"          path: packages/MRzefvGenerated.zip\n"
+    @"\n"
+    @"      - name: Upload build metadata\n"
+    @"        uses: actions/upload-artifact@v4\n"
+    @"        with:\n"
+    @"          name: MRzefvGenerated-metadata\n"
+    @"          path: packages/build-info.json\n";
+}
+#pragma mark - Generation Receipt
+static NSDictionary *AVX512GenerationReceipt(NSString *sessionID,
+                                             NSString *targetClassName,
+                                             NSArray *operations)
+{
+    return @{
+        @"generator" : @"AVX512/MRzefv",
+        @"sessionID" : sessionID,
+        @"targetClass" : targetClassName ?: @"",
+        @"operationCount" : @(operations.count),
+        @"status" : @"generated"
+    };
+}
+#pragma mark - Main Generator
+@implementation AVX512GeneratedProject
++ (NSURL *)generateProjectWithTargetView:(UIView *)targetView
+                              operations:(NSArray *)operations
+                                   error:(NSError **)error
+{
+    if (!targetView) {
+        if (error) {
+            *error = AVX512Error(@"A target view is required.");
+        }
+        return nil;
     }
-
-#pragma mark - Objective-C Escaping
-
-* (NSString *)objcString:(NSString *)value
-    {
-    if (!value) {
-    return @””;
+    if (![operations isKindOfClass:NSArray.class]) {
+        if (error) {
+            *error = AVX512Error(@"Operations must be an NSArray.");
+        }
+        return nil;
     }
-    NSString *escaped =
-    [value stringByReplacingOccurrencesOfString:@”\”
-    withString:@”\\”];
-    escaped =
-    [escaped stringByReplacingOccurrencesOfString:@”"”
-    withString:@”\"”];
-    escaped =
-    [escaped stringByReplacingOccurrencesOfString:@”\n”
-    withString:@”\n”];
-    escaped =
-    [escaped stringByReplacingOccurrencesOfString:@”\r”
-    withString:@”\r”];
-    escaped =
-    [escaped stringByReplacingOccurrencesOfString:@”\t”
-    withString:@”\t”];
-    return escaped;
+    NSString *sessionID =
+        AVX512UUID();
+    NSString *targetClassName =
+        NSStringFromClass(targetView.class);
+    NSArray *safeOperations =
+        [operations copy];
+    NSArray *documents =
+        NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,
+                                            NSUserDomainMask,
+                                            YES);
+    NSString *documentsPath =
+        documents.firstObject;
+    if (!documentsPath) {
+        if (error) {
+            *error = AVX512Error(@"Could not locate the Documents directory.");
+        }
+        return nil;
     }
-
-#pragma mark - Errors
-
-* (id)fail:(NSError **)error
-    code:(NSInteger)code
-    reason:(NSString *)reason
-    {
-    if (error) {
-    *error =
-    [NSError
-    errorWithDomain:@“AVX512GeneratedProject”
-    code:code
-    userInfo:@{
-    NSLocalizedDescriptionKey :
-    reason ?: @“Unknown generator error.”
-    }];
+    NSURL *root =
+        [NSURL fileURLWithPath:documentsPath
+                   isDirectory:YES];
+    NSURL *generatedRoot =
+        [[root
+          URLByAppendingPathComponent:@"AVX512"
+                          isDirectory:YES]
+         URLByAppendingPathComponent:@"Generated"
+                         isDirectory:YES];
+    NSURL *sessionRoot =
+        [generatedRoot
+         URLByAppendingPathComponent:sessionID
+                         isDirectory:YES];
+    NSURL *projectRoot =
+        [sessionRoot
+         URLByAppendingPathComponent:@"MRzefvGenerated"
+                         isDirectory:YES];
+    NSURL *sourcesRoot =
+        [projectRoot
+         URLByAppendingPathComponent:@"Sources"
+                         isDirectory:YES];
+    NSURL *githubRoot =
+        [projectRoot
+         URLByAppendingPathComponent:@".github"
+                         isDirectory:YES];
+    NSURL *workflowsRoot =
+        [githubRoot
+         URLByAppendingPathComponent:@"workflows"
+                         isDirectory:YES];
+    NSFileManager *fm =
+        NSFileManager.defaultManager;
+    NSError *directoryError = nil;
+    NSArray<NSURL *> *directories = @[
+        generatedRoot,
+        sessionRoot,
+        projectRoot,
+        sourcesRoot,
+        githubRoot,
+        workflowsRoot
+    ];
+    for (NSURL *directory in directories) {
+        if (![fm createDirectoryAtURL:directory
+           withIntermediateDirectories:YES
+                            attributes:nil
+                                 error:&directoryError]) {
+            if (error) {
+                *error = directoryError;
+            }
+            return nil;
+        }
     }
-    return nil;
+    NSURL *headerURL =
+        [sourcesRoot
+         URLByAppendingPathComponent:@"MRzefvGenerated.h"];
+    NSURL *sourceURL =
+        [sourcesRoot
+         URLByAppendingPathComponent:@"MRzefvGenerated.m"];
+    NSURL *manifestURL =
+        [projectRoot
+         URLByAppendingPathComponent:@"manifest.json"];
+    NSURL *receiptURL =
+        [projectRoot
+         URLByAppendingPathComponent:@"generation-receipt.json"];
+    NSURL *buildScriptURL =
+        [projectRoot
+         URLByAppendingPathComponent:@"build.sh"];
+    NSURL *workflowURL =
+        [workflowsRoot
+         URLByAppendingPathComponent:@"build-mrzefv-generated.yml"];
+    NSString *header =
+        AVX512GeneratedHeader(sessionID);
+    NSString *source =
+        AVX512GeneratedSource(sessionID,
+                              targetClassName,
+                              safeOperations);
+    NSDictionary *manifest =
+        AVX512Manifest(sessionID,
+                       targetClassName,
+                       safeOperations);
+    NSDictionary *receipt =
+        AVX512GenerationReceipt(sessionID,
+                                targetClassName,
+                                safeOperations);
+    NSError *writeError = nil;
+    if (!AVX512WriteString(header,
+                           headerURL,
+                           &writeError)) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
     }
-
+    if (!AVX512WriteString(source,
+                           sourceURL,
+                           &writeError)) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
+    }
+    NSData *manifestData =
+        [NSJSONSerialization dataWithJSONObject:manifest
+                                        options:NSJSONWritingPrettyPrinted |
+                                                NSJSONWritingSortedKeys
+                                          error:&writeError];
+    if (!manifestData ||
+        !AVX512WriteData(manifestData,
+                         manifestURL,
+                         &writeError)) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
+    }
+    NSData *receiptData =
+        [NSJSONSerialization dataWithJSONObject:receipt
+                                        options:NSJSONWritingPrettyPrinted |
+                                                NSJSONWritingSortedKeys
+                                          error:&writeError];
+    if (!receiptData ||
+        !AVX512WriteData(receiptData,
+                         receiptURL,
+                         &writeError)) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
+    }
+    if (!AVX512WriteString(AVX512BuildScript(),
+                           buildScriptURL,
+                           &writeError)) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
+    }
+    if (!AVX512WriteString(AVX512Workflow(),
+                           workflowURL,
+                           &writeError)) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
+    }
+    NSDictionary *attributes = @{
+        NSFilePosixPermissions : @0755
+    };
+    if (![fm setAttributes:attributes
+               ofItemAtPath:buildScriptURL.path
+                      error:&writeError]) {
+        if (error) {
+            *error = writeError;
+        }
+        return nil;
+    }
+    return projectRoot;
+}
 @end
