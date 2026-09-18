@@ -6,6 +6,7 @@
 //  Copyright (c) 2020 FLEX Team. All rights reserved.
 //
 
+#import <UIKit/UIKit.h>
 #import "FLEXExplorerToolbar.h"
 
 @class AVX512Window;
@@ -14,62 +15,84 @@
 
 FOUNDATION_EXPORT NSNotificationName const AVX512ExplorerSelectedViewDidChangeNotification;
 
-/// A view controller that manages the FLEX toolbar.
+/// A view controller that manages the AVX512/FLEX explorer toolbar
+/// and remains the canonical owner of live-view selection.
 @interface AVX512ExplorerViewController : UIViewController
 
-@property (nonatomic, weak) id <AVX512ExplorerViewControllerDelegate> delegate;
-@property (nonatomic, readonly) BOOL wantsWindowToBecomeKey;
+@property (nonatomic, weak)
+    id <AVX512ExplorerViewControllerDelegate> delegate;
 
-@property (nonatomic, readonly) AVX512ExplorerToolbar *explorerToolbar;
+@property (nonatomic, readonly)
+    BOOL wantsWindowToBecomeKey;
 
-/// The view currently selected by the existing AVX512/FLEX Select tool.
-@property (nonatomic, readonly, nullable) UIView *selectedView;
+@property (nonatomic, readonly)
+    AVX512ExplorerToolbar *explorerToolbar;
 
-- (BOOL)shouldReceiveTouchAtWindowPoint:(CGPoint)pointInWindowCoordinates;
+/// The UIView currently selected by the existing AVX512/FLEX
+/// Select tool.
+@property (nonatomic, readonly, nullable)
+    UIView *selectedView;
 
-/// Temporarily hands live-view selection to the existing Explorer Select tool.
+/// Determines whether the Explorer should receive a touch at a
+/// particular point in window coordinates.
+- (BOOL)shouldReceiveTouchAtWindowPoint:
+    (CGPoint)pointInWindowCoordinates;
+
+#pragma mark - MRzefv Live Selection
+
+/// Temporarily hands live-view selection to the existing
+/// AVX512/FLEX Select system.
 ///
-/// The currently presented tool, such as MRzefv UI Editor, may be dismissed
-/// while the Explorer waits for the user to select a live UIView.
+/// The currently presented tool, such as the MRzefv UI Editor,
+/// may be dismissed while the Explorer waits for the user to
+/// select a live UIView.
 ///
-/// The completion is called exactly once:
+/// The completion receives the exact UIView selected by the
+/// existing Explorer hit-testing system.
 ///
-///   selectedView != nil, cancelled == NO
-///       User selected a UIView.
+/// The completion is called at most once for a successful
+/// selection. Cancelling the request clears the pending callback.
 ///
-///   selectedView == nil, cancelled == YES
-///       Selection was cancelled, for example by Close.
-///
-/// The Explorer remains the owner of hit-testing, outlines and Select mode.
+/// MRzefv does not perform its own hit-testing; the Explorer
+/// remains the sole owner of selection, outlines, and Select mode.
 - (void)beginLiveViewSelectionWithCompletion:
-    (void (^)(UIView * _Nullable selectedView, BOOL cancelled))completion;
+    (void (^)(UIView * _Nullable selectedView))completion;
 
-/// Cancels an outstanding live-view selection request.
+/// Cancels an outstanding MRzefv live-view selection request.
 ///
-/// This is safe to call even when no external selection is pending.
+/// Safe to call when there is no pending request.
 - (void)cancelPendingLiveViewSelection;
 
-/// @brief Used to present (or dismiss) a modal view controller ("tool"),
-/// typically triggered by pressing a button in the toolbar.
-///
-/// If a tool is already presented, this method simply dismisses it and calls the completion block.
-/// If no tool is presented, @code future() @endcode is presented and the completion block is called.
-- (void)toggleToolWithViewControllerProvider:(UINavigationController *(^)(void))future
-                                  completion:(void (^)(void))completion;
+#pragma mark - Tool Presentation
 
-/// @brief Used to present (or dismiss) a modal view controller ("tool"),
-/// typically triggered by pressing a button in the toolbar.
+/// Used to present or dismiss a modal tool.
 ///
-/// If a tool is already presented, this method simply dismisses the tool and presents the given tool.
-/// The completion block is called once the tool has been presented.
-- (void)presentTool:(UINavigationController *(^)(void))future
-         completion:(void (^)(void))completion;
+/// If a tool is already presented, it is dismissed and the
+/// completion is called.
+///
+/// If no tool is presented, future() is presented and the
+/// completion is called afterward.
+- (void)toggleToolWithViewControllerProvider:
+    (UINavigationController *(^)(void))future
+    completion:(void (^)(void))completion;
 
-// Keyboard shortcut helpers
+/// Used to present a modal tool.
+///
+/// If a tool is already presented, it is dismissed first and
+/// the new tool is then presented.
+///
+/// The completion is called once the tool has been presented.
+- (void)presentTool:
+    (UINavigationController *(^)(void))future
+    completion:(void (^)(void))completion;
+
+#pragma mark - Keyboard Shortcut Helpers
+
 - (void)toggleSelectTool;
 - (void)toggleMoveTool;
 - (void)toggleViewsTool;
 - (void)toggleMenuTool;
+
 - (BOOL)handleDownArrowKeyPressed;
 - (BOOL)handleUpArrowKeyPressed;
 - (BOOL)handleRightArrowKeyPressed;
@@ -79,6 +102,7 @@ FOUNDATION_EXPORT NSNotificationName const AVX512ExplorerSelectedViewDidChangeNo
 
 @protocol AVX512ExplorerViewControllerDelegate <NSObject>
 
-- (void)explorerViewControllerDidFinish:(AVX512ExplorerViewController *)explorerViewController;
+- (void)explorerViewControllerDidFinish:
+    (AVX512ExplorerViewController *)explorerViewController;
 
 @end
