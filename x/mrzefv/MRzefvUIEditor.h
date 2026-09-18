@@ -53,7 +53,11 @@ typedef NS_ENUM(NSUInteger, MRzefvUIChangeType) {
 
 @property (nonatomic, strong, readonly) MRzefvUIProfile *profile;
 
+/// The exact UIView selected by AVX512/FLEX's existing Select tool.
 @property (nonatomic, weak, nullable) UIView *selectedView;
+
+/// Starts the existing AVX512/FLEX live-view selector.
+- (void)beginViewSelection;
 
 - (void)beginPreview;
 - (void)resetPreview;
