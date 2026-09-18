@@ -1,160 +1,344 @@
-#import "FLEXManager+ThreeFingerTap.h"
-#import "FLEXManager.h"
-#import "UIGestureRecognizer+Blocks.h"
+#import “FLEXManager+ThreeFingerTap.h”
+#import “FLEXManager.h”
+#import “UIGestureRecognizer+Blocks.h”
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// The static variable variables used to hold gesture identifiers for the use of a stational variant that holds hand-t position
-static UILongPressGestureRecognizer *avx512_threeFingerLongPressGesture = nil;
+#pragma mark - Gesture Storage
+
+static UITapGestureRecognizer *avx512_threeFingerTapGesture = nil;
+
+#pragma mark - AVX512 Manager
 
 @implementation AVX512Manager (ThreeFingerTap)
 
-+ (void)load {
-    // To ensure that it is performed in the main thread programme, and has been applied to startUISetup after complete settings set-over
-    if ([NSThread isMainThread]) {
+* (void)load
+    {
+    /*
+    * +load can execute before the application’s main window exists.
+    * Always install the gesture on the main thread and retry if the
+    * host application’s window has not been created yet.
+        */
+        if ([NSThread isMainThread]) {
         [self avx512_setupGesture];
-    } else {
+        } else {
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self avx512_setupGesture];
+        [self avx512_setupGesture];
         });
-    }
-}
+        }
+        }
 
-+ (void)avx512_setupGesture {
+#pragma mark - Gesture Setup
+
+* (void)avx512_setupGesture
+    {
+    if (![NSThread isMainThread]) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+    [self avx512_setupGesture];
+    });
+    return;
+    }
     UIWindow *targetWindow = [self avx512_findTargetWindow];
-
     if (!targetWindow) {
-        // If no window is not found if there are none windows, try again later at a +load Implementation occurs prematurely when implementation is too early.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self avx512_setupGesture];
-        });
+    /*
+    * The host application may not have created its window yet.
+    * Retry shortly instead of permanently failing during +load.
+    */
+    dispatch_after(
+    dispatch_time(
+    DISPATCH_TIME_NOW,
+    (int64_t)(1.0 * NSEC_PER_SEC)
+    ),
+    dispatch_get_main_queue(),
+    ^{
+    [self avx512_setupGesture];
+    }
+    );
+
+  return;
+
+    }
+    /*
+    * If the existing gesture is already attached to the correct
+    * application window, there is nothing else to do.
+        */
+        if (avx512_threeFingerTapGesture) {
+        if (avx512_threeFingerTapGesture.view == targetWindow) {
         return;
-    }
-
-    // Check whether gestures have been added to this window by checking if the hand signs were inserted into
-    for (UIGestureRecognizer *existingGesture in targetWindow.gestureRecognizers) {
-        if (existingGesture == avx512_threeFingerLongPressGesture) {
-            // To ensure that the gestures are made on a correct view
-            if (existingGesture.view == targetWindow) {
-                 return; // Added added add-
-            } else {
-                // If the gesture is on a wrong view, remove it if you move your hand position in
-                [existingGesture.view removeGestureRecognizer:existingGesture];
-                avx512_threeFingerLongPressGesture = nil; // It is placed in place and itnilto recreate it again so that the
-            }
         }
-    }
-    
-    // If we have an old hand gesture on a different window, remove it if there's one of the older
-    if (avx512_threeFingerLongPressGesture && avx512_threeFingerLongPressGesture.view != targetWindow) {
-        [avx512_threeFingerLongPressGesture.view removeGestureRecognizer:avx512_threeFingerLongPressGesture];
-        avx512_threeFingerLongPressGesture = nil;
-    }
+        /*
+        * The active application window changed.
+        * Move the recognizer to the new host window.
+            */
+            UIView *oldView = avx512_threeFingerTapGesture.view;
+        if (oldView) {
+        [oldView removeGestureRecognizer:
+        avx512_threeFingerTapGesture];
+        }
+        }
+    /*
+    * Create the gesture once.
+        */
+        if (!avx512_threeFingerTapGesture) {
+        __weak typeof(self) weakSelf = self;
+        avx512_threeFingerTapGesture =
+        [UITapGestureRecognizer avx512_action:
+        ^(UIGestureRecognizer *gesture) {
 
+ __strong typeof(weakSelf) strongSelf = weakSelf;
+ if (!strongSelf) {
+     return;
+ }
+ if (gesture.state !=
+     UIGestureRecognizerStateEnded) {
+     return;
+ }
+ AVX512Manager *manager =
+     [AVX512Manager sharedManager];
+ if (!manager) {
+     NSLog(
+         @"[AVX512] Three-finger tap detected, "
+         @"but AVX512Manager is unavailable."
+     );
+     return;
+ }
+ NSLog(
+     @"[AVX512] Three-finger tap → toggleExplorer"
+ );
+ /*
+  * This is the existing AVX512/FLEX explorer entry
+  * point. It preserves the existing menu and tools,
+  * including the runtime View/Select/Disassemble/Hook
+  * workflow.
+  */
+ [manager toggleExplorer];
 
-    if (!avx512_threeFingerLongPressGesture) {
-        avx512_threeFingerLongPressGesture = [UILongPressGestureRecognizer avx512_action:^(UIGestureRecognizer *gesture) {
-            if (gesture.state == UIGestureRecognizerStateBegan) {
-                if ([AVX512Manager sharedManager]) {
-                    [[AVX512Manager sharedManager] toggleExplorer];
-                }
-            }
         }];
-        
-        avx512_threeFingerLongPressGesture.numberOfTouchesRequired = 3;
-        // Optional: If defaulted, optional if it is the0.5The ss second is not appropriate for the seconds, which can set a minimum pressure-press
-        // avx512_threeFingerLongPressGesture.minimumPressDuration = 0.8; // For example, for0.8seconds second sec ss
-    }
-
-    // To ensure that gestures are not added to other views in another view
-    if (avx512_threeFingerLongPressGesture.view && avx512_threeFingerLongPressGesture.view != targetWindow) {
-        [avx512_threeFingerLongPressGesture.view removeGestureRecognizer:avx512_threeFingerLongPressGesture];
-    }
-    
-    if (avx512_threeFingerLongPressGesture.view != targetWindow) {
-        [targetWindow addGestureRecognizer:avx512_threeFingerLongPressGesture];
-    }
-}
-
-+ (UIWindow *)avx512_findTargetWindow {
-    UIWindow *applicationWindow = nil;
-
-    if (@available(iOS 13.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-                UIWindowScene *windowScene = (UIWindowScene *)scene;
-                for (UIWindow *window in windowScene.windows) {
-                    // First priority selection a non-non instead of oneFLEXWindowThe whole of all thekey window
-                    if (window.isKeyWindow && ![NSStringFromClass(window.class) isEqualToString:@"AVX512Window"]) {
-                        applicationWindow = window;
-                        break;
-                    }
-                }
-                if (applicationWindow) break;
-
-                // Option: Alternative option alternative options for alternate alternatives to any of the activitykey window
-                if (!applicationWindow) {
-                    for (UIWindow *window in windowScene.windows) {
-                        if (window.isKeyWindow) {
-                            applicationWindow = window;
-                            break;
-                        }
-                    }
-                }
-                if (applicationWindow) break;
-                
-                // Option alternative: Alternative option options for the first non-non First Non inFLEXWindow
-                 if (!applicationWindow) {
-                    for (UIWindow *window in windowScene.windows) {
-                        if (![NSStringFromClass(window.class) isEqualToString:@"AVX512Window"]) {
-                            applicationWindow = window;
-                            break;
-                        }
-                    }
-                }
-                if (applicationWindow) break;
+        avx512_threeFingerTapGesture.numberOfTouchesRequired = 3;
+        avx512_threeFingerTapGesture.numberOfTapsRequired = 1;
+        /*
+        * Do not swallow the application’s normal touches.
+            */
+            avx512_threeFingerTapGesture.cancelsTouchesInView = NO;
+            avx512_threeFingerTapGesture.delaysTouchesBegan = NO;
+            avx512_threeFingerTapGesture.delaysTouchesEnded = NO;
             }
+    /*
+    * Make absolutely sure the recognizer is not attached to an old
+    * window before attaching it to the current host application window.
+        */
+        if (avx512_threeFingerTapGesture.view &&
+        avx512_threeFingerTapGesture.view != targetWindow) {
+        [avx512_threeFingerTapGesture.view
+        removeGestureRecognizer:
+        avx512_threeFingerTapGesture];
+        }
+    if (avx512_threeFingerTapGesture.view != targetWindow) {
+    [targetWindow
+    addGestureRecognizer:
+    avx512_threeFingerTapGesture];
+
+  NSLog(
+      @"[AVX512] Installed three-finger tap on %@",
+      targetWindow
+  );
+
+    }
+    }
+
+#pragma mark - Target Window
+
+* (UIWindow *)avx512_findTargetWindow
+    {
+    UIWindow *applicationWindow = nil;
+    /*
+    * iOS 13+
+    * Prefer the foreground-active scene and its key window.
+        */
+        if (@available(iOS 13.0, *)) {
+        for (UIScene *scene
+        in [UIApplication sharedApplication].connectedScenes) {
+
+ if (scene.activationState !=
+     UISceneActivationStateForegroundActive) {
+     continue;
+ }
+ if (![scene isKindOfClass:[UIWindowScene class]]) {
+     continue;
+ }
+ UIWindowScene *windowScene =
+     (UIWindowScene *)scene;
+ /*
+  * First priority:
+  * key window that is not the AVX512 window.
+  */
+ for (UIWindow *window
+      in windowScene.windows) {
+     if (window.isKeyWindow &&
+         ![NSStringFromClass(window.class)
+             isEqualToString:@"AVX512Window"]) {
+         applicationWindow = window;
+         break;
+     }
+ }
+ if (applicationWindow) {
+     break;
+ }
+ /*
+  * Second priority:
+  * any key window.
+  */
+ for (UIWindow *window
+      in windowScene.windows) {
+     if (window.isKeyWindow) {
+         applicationWindow = window;
+         break;
+     }
+ }
+ if (applicationWindow) {
+     break;
+ }
+ /*
+  * Third priority:
+  * visible non-AVX512 window.
+  */
+ for (UIWindow *window
+      in windowScene.windows) {
+     if (![NSStringFromClass(window.class)
+             isEqualToString:@"AVX512Window"] &&
+         !window.isHidden &&
+         window.alpha > 0.0 &&
+         window.windowLevel ==
+             UIWindowLevelNormal) {
+         applicationWindow = window;
+         break;
+     }
+ }
+ if (applicationWindow) {
+     break;
+ }
+
+        }
+        }
+    /*
+    * iOS < 13 fallback.
+        */
+        if (!applicationWindow) {
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored “-Wdeprecated-declarations”
+
+    NSArray<UIWindow *> *windows =
+        [UIApplication sharedApplication].windows;
+    /*
+     * Prefer a visible key window that isn't AVX512Window.
+     */
+    for (UIWindow *window in windows) {
+        if (window.isKeyWindow &&
+            ![NSStringFromClass(window.class)
+                isEqualToString:@"AVX512Window"]) {
+            applicationWindow = window;
+            break;
         }
     }
-
-    // iOS < 13 or options for the option if a suitable window is not found when appropriate windows are missing,
+    /*
+     * Look for any visible non-AVX512 window if no key window
+     * was found.
+     */
     if (!applicationWindow) {
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        NSArray<UIWindow *> *windows = [UIApplication sharedApplication].windows;
         for (UIWindow *window in windows) {
-            if (window.isKeyWindow && ![NSStringFromClass(window.class) isEqualToString:@"AVX512Window"]) {
+            if (![NSStringFromClass(window.class)
+                    isEqualToString:@"AVX512Window"] &&
+                !window.isHidden &&
+                window.alpha > 0.0) {
                 applicationWindow = window;
                 break;
             }
         }
-        // If the attempt above fails, if your attempts on it fail to make a failure.keyWindow(pos likely to be possible)AVX512Window()), and the
-        if (!applicationWindow) {
-            applicationWindow = [UIApplication sharedApplication].keyWindow;
-        }
-        
-        // If you have access to what if thekeyWindowYes, yes orFLEXWindow, and try to search for other non-otherFLEXWindowand visible window windows with a view to the invisible
-        if (applicationWindow && [NSStringFromClass(applicationWindow.class) isEqualToString:@"AVX512Window"]) {
-            UIWindow* fallbackWindow = nil;
-            for (UIWindow *window in windows) {
-                if (![NSStringFromClass(window.class) isEqualToString:@"AVX512Window"] && !window.isHidden) {
-                    fallbackWindow = window; // Found a available non-accessable, not foundFLEXWindow window of the windows
-                    if (window.isKeyWindow) { // If this window just happens to happen, and if thekey window, to prioritize priority use of the
+    }
+    /*
+     * Final legacy fallback.
+     */
+    if (!applicationWindow) {
+        applicationWindow =
+            [UIApplication sharedApplication].keyWindow;
+    }
+
+#pragma clang diagnostic pop
+}
+
+/*
+ * Never intentionally install the gesture on the AVX512
+ * presentation window when another application window exists.
+ */
+if (applicationWindow &&
+    [NSStringFromClass(applicationWindow.class)
+        isEqualToString:@"AVX512Window"]) {
+    UIWindow *fallbackWindow = nil;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene
+             in [UIApplication sharedApplication].connectedScenes) {
+            if (scene.activationState !=
+                UISceneActivationStateForegroundActive) {
+                continue;
+            }
+            if (![scene isKindOfClass:[UIWindowScene class]]) {
+                continue;
+            }
+            UIWindowScene *windowScene =
+                (UIWindowScene *)scene;
+            for (UIWindow *window
+                 in windowScene.windows) {
+                if (![NSStringFromClass(window.class)
+                        isEqualToString:@"AVX512Window"] &&
+                    !window.isHidden &&
+                    window.alpha > 0.0 &&
+                    window.windowLevel ==
+                        UIWindowLevelNormal) {
+                    fallbackWindow = window;
+                    if (window.isKeyWindow) {
                         applicationWindow = window;
                         break;
                     }
                 }
             }
-            if (![NSStringFromClass(applicationWindow.class) isEqualToString:@"AVX512Window"] || !fallbackWindow) {
-                 // If if, whatapplicationWindowcontinues to be and remainsFLEXWindow, or not found and could have been locatedfallbackWindow, and remain the same as before to keep it
-            } else {
-                applicationWindow = fallbackWindow; // Use the non-use instead of usingFLEXWindow window of the windows
+            if (applicationWindow !=
+                nil &&
+                ![NSStringFromClass(applicationWindow.class)
+                    isEqualToString:@"AVX512Window"]) {
+                break;
             }
         }
-        #pragma clang diagnostic pop
+    } else {
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored “-Wdeprecated-declarations”
+
+        for (UIWindow *window
+             in [UIApplication sharedApplication].windows) {
+            if (![NSStringFromClass(window.class)
+                    isEqualToString:@"AVX512Window"] &&
+                !window.isHidden &&
+                window.alpha > 0.0) {
+                fallbackWindow = window;
+                if (window.isKeyWindow) {
+                    applicationWindow = window;
+                    break;
+                }
+            }
+        }
+
+#pragma clang diagnostic pop
+}
+
+    if ([NSStringFromClass(applicationWindow.class)
+            isEqualToString:@"AVX512Window"] &&
+        fallbackWindow) {
+        applicationWindow = fallbackWindow;
     }
-    
-    return applicationWindow;
+}
+return applicationWindow;
+
 }
 
 @end
