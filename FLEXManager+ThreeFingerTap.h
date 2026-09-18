@@ -2,8 +2,6 @@
 //  FLEXManager+ThreeFingerTap.h
 //  AVX512
 //
-//  Three-finger gesture support for AVX512Manager.
-//
 #import <UIKit/UIKit.h>
 @class AVX512Manager;
 @interface AVX512Manager (ThreeFingerTap)
