@@ -82,11 +82,9 @@
 
         if (change.replacementValue.length) {
             /*
-             * Keep the on-disk JSON key as "newValue".
-             *
-             * The Objective-C property is intentionally named
-             * replacementValue because "newValue" conflicts with
-             * Objective-C method-family naming rules.
+             * The Objective-C property is intentionally called
+             * replacementValue. The serialized profile format
+             * continues to expose this as "newValue".
              */
             dictionary[@"newValue"] = change.replacementValue;
         }
@@ -137,7 +135,24 @@
 
 @interface MRzefvUIEditorController ()
 
-@property (nonatomic, strong) MRzefvUIProfile *profile;
+@property (nonatomic, strong)
+    MRzefvUIProfile *profile;
+
+- (AVX512ExplorerViewController *)
+    findExplorerFromViewController:(UIViewController *)controller;
+
+- (AVX512ExplorerViewController *)
+    avx512ExplorerViewController;
+
+- (void)
+    presentEditorAfterSelectionFromExplorer:
+        (AVX512ExplorerViewController *)explorer;
+
+- (void)changeText;
+- (void)toggleHidden;
+- (void)changeAlignment;
+- (void)changeFrame;
+- (void)addText;
 
 @end
 
@@ -174,50 +189,70 @@
 #pragma mark - Explorer Lookup
 
 /**
- * Searches from a controller through its presentation,
- * navigation, and child hierarchy until the existing FLEX
- * Explorer is found.
+ * Searches the supplied controller hierarchy for the existing
+ * AVX512 Explorer.
+ *
+ * The source/header filename remains FLEXExplorerViewController.h,
+ * but the actual Objective-C class in that header is:
+ *
+ *     AVX512ExplorerViewController
+ *
+ * MRzefv therefore uses the actual class type here.
  */
-- (FLEXExplorerViewController *)findExplorerFromViewController:
-    (UIViewController *)controller {
+- (AVX512ExplorerViewController *)
+    findExplorerFromViewController:(UIViewController *)controller {
 
     if (!controller) {
         return nil;
     }
 
-    if ([controller isKindOfClass:FLEXExplorerViewController.class]) {
-        return (FLEXExplorerViewController *)controller;
+    if ([controller
+            isKindOfClass:AVX512ExplorerViewController.class]) {
+
+        return (AVX512ExplorerViewController *)controller;
     }
 
     /*
-     * If MRzefv is presented by the Explorer, this is normally
-     * the fastest path back to it.
+     * Walk toward the presenter first because MRzefv is normally
+     * presented from the Explorer.
      */
     if (controller.presentingViewController) {
-        FLEXExplorerViewController *explorer =
-            [self findExplorerFromViewController:
-                controller.presentingViewController];
+
+        AVX512ExplorerViewController *explorer =
+            [self
+                findExplorerFromViewController:
+                    controller.presentingViewController];
 
         if (explorer) {
             return explorer;
         }
     }
 
+    /*
+     * Check the navigation-controller hierarchy.
+     */
     if (controller.navigationController &&
         controller.navigationController != controller) {
 
-        FLEXExplorerViewController *explorer =
-            [self findExplorerFromViewController:
-                controller.navigationController];
+        AVX512ExplorerViewController *explorer =
+            [self
+                findExplorerFromViewController:
+                    controller.navigationController];
 
         if (explorer) {
             return explorer;
         }
     }
 
-    for (UIViewController *child in controller.childViewControllers) {
-        FLEXExplorerViewController *explorer =
-            [self findExplorerFromViewController:child];
+    /*
+     * Finally inspect child controllers.
+     */
+    for (UIViewController *child
+         in controller.childViewControllers) {
+
+        AVX512ExplorerViewController *explorer =
+            [self
+                findExplorerFromViewController:child];
 
         if (explorer) {
             return explorer;
@@ -227,13 +262,19 @@
     return nil;
 }
 
+#pragma mark - Application Explorer Lookup
+
 /**
- * Fallback lookup through the application's active window hierarchy.
+ * Fallback lookup through the application's active window
+ * hierarchy.
  */
-- (FLEXExplorerViewController *)flexExplorerViewController {
+- (AVX512ExplorerViewController *)
+    avx512ExplorerViewController {
+
     UIWindow *keyWindow = nil;
 
     if (@available(iOS 13.0, *)) {
+
         for (UIScene *scene
              in UIApplication.sharedApplication.connectedScenes) {
 
@@ -250,6 +291,7 @@
             }
 
             for (UIWindow *window in windowScene.windows) {
+
                 if (window.isKeyWindow) {
                     keyWindow = window;
                     break;
@@ -279,23 +321,29 @@
     UIViewController *controller =
         keyWindow.rootViewController;
 
+    /*
+     * Walk the active presentation hierarchy.
+     */
     while (controller) {
 
-        if ([controller isKindOfClass:
-                FLEXExplorerViewController.class]) {
+        if ([controller
+                isKindOfClass:AVX512ExplorerViewController.class]) {
 
-            return (FLEXExplorerViewController *)controller;
+            return (AVX512ExplorerViewController *)controller;
         }
 
         UIViewController *next = nil;
 
         if (controller.presentedViewController) {
-            next = controller.presentedViewController;
+
+            next =
+                controller.presentedViewController;
 
         } else if (controller.navigationController &&
                    controller.navigationController != controller) {
 
-            next = controller.navigationController;
+            next =
+                controller.navigationController;
 
         } else if (controller.childViewControllers.count > 0) {
 
@@ -310,18 +358,26 @@
         controller = next;
     }
 
-    return nil;
+    /*
+     * If the active chain did not expose it, perform a recursive
+     * search from the root controller.
+     */
+    return [self
+        findExplorerFromViewController:
+            keyWindow.rootViewController];
 }
 
 #pragma mark - MRzefv Selection Handoff
 
 - (void)beginViewSelection {
 
-    FLEXExplorerViewController *explorer =
-        [self findExplorerFromViewController:self];
+    AVX512ExplorerViewController *explorer =
+        [self
+            findExplorerFromViewController:self];
 
     if (!explorer) {
-        explorer = [self flexExplorerViewController];
+        explorer =
+            [self avx512ExplorerViewController];
     }
 
     if (!explorer) {
@@ -329,7 +385,8 @@
         UIAlertController *alert =
             [UIAlertController
                 alertControllerWithTitle:@"MRzefv UI Editor"
-                message:@"The FLEX live-view explorer could not be found."
+                message:
+                    @"The FLEX/AVX512 live-view explorer could not be found."
                 preferredStyle:UIAlertControllerStyleAlert];
 
         [alert addAction:
@@ -348,14 +405,17 @@
     __weak typeof(self) weakSelf = self;
 
     /*
-     * FLEX owns the actual live-view selection system.
+     * Important:
+     *
+     * AVX512ExplorerViewController's existing API takes exactly
+     * one argument:
+     *
+     *     UIView *selectedView
+     *
+     * A nil view means the FLEX selection was cancelled.
      *
      * MRzefv does not install another gesture recognizer,
-     * perform its own hit-testing, or create another selection
-     * overlay.
-     *
-     * A non-nil UIView means selection succeeded.
-     * A nil UIView means the selection was cancelled.
+     * perform its own hit-testing, or create another overlay.
      */
     [explorer
         beginLiveViewSelectionWithCompletion:
@@ -371,28 +431,38 @@
 
             if (selectedView) {
 
-                self.selectedView = selectedView;
+                self.selectedView =
+                    selectedView;
 
-                NSLog(@"[MRzefv] Live view selected: %@ <%p>",
-                      NSStringFromClass(selectedView.class),
-                      selectedView);
+                NSLog(
+                    @"[MRzefv] Live view selected: %@ <%p>",
+                    NSStringFromClass(selectedView.class),
+                    selectedView
+                );
 
             } else {
 
-                NSLog(@"[MRzefv] Live view selection cancelled.");
+                NSLog(
+                    @"[MRzefv] Live view selection cancelled."
+                );
             }
 
             /*
-             * Return to MRzefv after FLEX has completed its
-             * selection/dismissal transition.
+             * FLEX/AVX512 owns the selection transition.
+             * Once it finishes, restore the MRzefv editor.
              */
-            [self presentEditorAfterSelectionFromExplorer:explorer];
+            [self
+                presentEditorAfterSelectionFromExplorer:
+                    explorer];
         });
     }];
 }
 
-- (void)presentEditorAfterSelectionFromExplorer:
-    (FLEXExplorerViewController *)explorer {
+#pragma mark - Return To Editor
+
+- (void)
+    presentEditorAfterSelectionFromExplorer:
+        (AVX512ExplorerViewController *)explorer {
 
     if (!explorer) {
         return;
@@ -401,13 +471,12 @@
     dispatch_async(dispatch_get_main_queue(), ^{
 
         /*
-         * If another controller is already being presented,
-         * avoid stacking another MRzefv controller.
+         * If MRzefv is already being presented, simply refresh it.
          */
-        if (explorer.presentedViewController) {
+        UIViewController *presented =
+            explorer.presentedViewController;
 
-            UIViewController *presented =
-                explorer.presentedViewController;
+        if (presented) {
 
             if ([presented isKindOfClass:
                     UINavigationController.class]) {
@@ -415,8 +484,8 @@
                 UINavigationController *navigationController =
                     (UINavigationController *)presented;
 
-                if (navigationController.viewControllers.firstObject
-                    == self) {
+                if (navigationController.topViewController == self ||
+                    navigationController.viewControllers.firstObject == self) {
 
                     [self.tableView reloadData];
                     return;
@@ -424,15 +493,34 @@
             }
 
             /*
-             * UIKit may still be finishing the previous transition.
-             * Try again on the next main-thread turn.
+             * UIKit can still be finishing the FLEX transition.
+             * Retry on the next main-thread turn.
              */
             dispatch_async(dispatch_get_main_queue(), ^{
 
                 if (!explorer.presentedViewController) {
+
                     [self
                         presentEditorAfterSelectionFromExplorer:
                             explorer];
+
+                } else {
+
+                    UIViewController *current =
+                        explorer.presentedViewController;
+
+                    if ([current isKindOfClass:
+                            UINavigationController.class]) {
+
+                        UINavigationController *navigationController =
+                            (UINavigationController *)current;
+
+                        if (navigationController.topViewController == self ||
+                            navigationController.viewControllers.firstObject == self) {
+
+                            [self.tableView reloadData];
+                        }
+                    }
                 }
             });
 
@@ -440,8 +528,8 @@
         }
 
         /*
-         * Reuse this exact editor instance so its profile and
-         * selectedView survive the FLEX handoff.
+         * Reuse this exact MRzefv controller so selectedView and
+         * profile survive the FLEX handoff.
          */
         UINavigationController *navigationController =
             [[UINavigationController alloc]
@@ -469,26 +557,33 @@
         return;
     }
 
-    NSLog(@"[MRzefv] Beginning live preview for %@ <%p>",
-          NSStringFromClass(view.class),
-          view);
+    NSLog(
+        @"[MRzefv] Beginning live preview for %@ <%p>",
+        NSStringFromClass(view.class),
+        view
+    );
 
     /*
-     * Live changes are applied directly to the selected UIView.
-     * Each change is recorded in the MRzefv profile.
+     * Changes are applied directly to the selected UIView.
+     * Each modification is recorded in the profile.
      */
 }
+
+#pragma mark - Reset Preview
 
 - (void)resetPreview {
 
     UIView *view = self.selectedView;
 
     if (!view) {
+        [self.profile removeAllChanges];
+        [self.tableView reloadData];
         return;
     }
 
     /*
-     * Walk backwards so the most recent change is restored first.
+     * Restore in reverse order so multiple edits to the same
+     * property are unwound correctly.
      */
     for (MRzefvUIChange *change
          in self.profile.changes.reverseObjectEnumerator) {
@@ -496,81 +591,150 @@
         if (change.targetClass.length &&
             ![NSStringFromClass(view.class)
                 isEqualToString:change.targetClass]) {
+
             continue;
         }
 
-        if (change.type == MRzefvUIChangeTypeText &&
-            change.propertyName.length &&
-            change.originalValue) {
+        switch (change.type) {
 
-            if ([view isKindOfClass:UILabel.class] &&
-                [change.propertyName isEqualToString:@"text"]) {
+            case MRzefvUIChangeTypeText: {
 
-                ((UILabel *)view).text =
-                    change.originalValue;
+                if (!change.originalValue) {
+                    break;
+                }
 
-            } else if ([view isKindOfClass:UITextField.class] &&
-                       [change.propertyName
-                           isEqualToString:@"text"]) {
+                if ([view isKindOfClass:UILabel.class] &&
+                    [change.propertyName
+                        isEqualToString:@"text"]) {
 
-                ((UITextField *)view).text =
-                    change.originalValue;
+                    ((UILabel *)view).text =
+                        change.originalValue;
 
-            } else if ([view isKindOfClass:UITextView.class] &&
-                       [change.propertyName
-                           isEqualToString:@"text"]) {
+                } else if ([view isKindOfClass:UITextField.class] &&
+                           [change.propertyName
+                               isEqualToString:@"text"]) {
 
-                ((UITextView *)view).text =
-                    change.originalValue;
+                    ((UITextField *)view).text =
+                        change.originalValue;
 
-            } else if ([view isKindOfClass:UIButton.class] &&
-                       [change.propertyName
-                           isEqualToString:@"title"]) {
+                } else if ([view isKindOfClass:UITextView.class] &&
+                           [change.propertyName
+                               isEqualToString:@"text"]) {
 
-                [(UIButton *)view
-                    setTitle:change.originalValue
-                    forState:UIControlStateNormal];
+                    ((UITextView *)view).text =
+                        change.originalValue;
+
+                } else if ([view isKindOfClass:UIButton.class] &&
+                           [change.propertyName
+                               isEqualToString:@"title"]) {
+
+                    [(UIButton *)view
+                        setTitle:change.originalValue
+                        forState:UIControlStateNormal];
+                }
+
+                break;
             }
-        }
 
-        if (change.type == MRzefvUIChangeTypeHidden) {
-            view.hidden = NO;
-        }
+            case MRzefvUIChangeTypeHidden: {
 
-        if (change.type == MRzefvUIChangeTypeFrame) {
-            /*
-             * Frame changes are currently represented by the
-             * replacement frame in the profile. Original frame
-             * restoration can be added later without changing
-             * the profile format.
-             */
-        }
+                if (change.originalValue.length) {
 
-        if (change.type == MRzefvUIChangeTypeAlignment) {
+                    view.hidden =
+                        [change.originalValue
+                            boolValue];
+                }
 
-            if ([view isKindOfClass:UILabel.class] &&
-                [change.propertyName
-                    isEqualToString:@"textAlignment"]) {
+                break;
+            }
 
-                ((UILabel *)view).textAlignment =
+            case MRzefvUIChangeTypeAlignment: {
+
+                if (!change.originalValue.length) {
+                    break;
+                }
+
+                NSTextAlignment alignment =
                     (NSTextAlignment)
-                    change.originalValue.integerValue;
+                        change.originalValue.integerValue;
 
-            } else if ([view isKindOfClass:UITextField.class] &&
-                       [change.propertyName
-                           isEqualToString:@"textAlignment"]) {
+                if ([view isKindOfClass:UILabel.class] &&
+                    [change.propertyName
+                        isEqualToString:@"textAlignment"]) {
 
-                ((UITextField *)view).textAlignment =
-                    (NSTextAlignment)
-                    change.originalValue.integerValue;
+                    ((UILabel *)view).textAlignment =
+                        alignment;
 
-            } else if ([view isKindOfClass:UITextView.class] &&
-                       [change.propertyName
-                           isEqualToString:@"textAlignment"]) {
+                } else if ([view isKindOfClass:UITextField.class] &&
+                           [change.propertyName
+                               isEqualToString:@"textAlignment"]) {
 
-                ((UITextView *)view).textAlignment =
-                    (NSTextAlignment)
-                    change.originalValue.integerValue;
+                    ((UITextField *)view).textAlignment =
+                        alignment;
+
+                } else if ([view isKindOfClass:UITextView.class] &&
+                           [change.propertyName
+                               isEqualToString:@"textAlignment"]) {
+
+                    ((UITextView *)view).textAlignment =
+                        alignment;
+                }
+
+                break;
+            }
+
+            case MRzefvUIChangeTypeFrame: {
+
+                if (change.originalValue.length) {
+
+                    CGRect originalFrame =
+                        CGRectFromString(
+                            change.originalValue
+                        );
+
+                    view.frame =
+                        originalFrame;
+                }
+
+                break;
+            }
+
+            case MRzefvUIChangeTypeAddText: {
+
+                /*
+                 * Added labels are represented by an AddText
+                 * profile record. Remove the most recently added
+                 * matching label where possible.
+                 */
+                for (UIView *subview
+                     in [view.subviews reverseObjectEnumerator]) {
+
+                    if (![subview isKindOfClass:UILabel.class]) {
+                        continue;
+                    }
+
+                    UILabel *label =
+                        (UILabel *)subview;
+
+                    BOOL textMatches =
+                        (!change.replacementValue.length ||
+                         [label.text
+                            isEqualToString:
+                                change.replacementValue]);
+
+                    BOOL frameMatches =
+                        CGRectEqualToRect(
+                            label.frame,
+                            change.frame
+                        );
+
+                    if (textMatches && frameMatches) {
+                        [label removeFromSuperview];
+                        break;
+                    }
+                }
+
+                break;
             }
         }
     }
@@ -594,15 +758,18 @@
 
     if ([view isKindOfClass:UILabel.class]) {
 
-        currentText = ((UILabel *)view).text;
+        currentText =
+            ((UILabel *)view).text;
 
     } else if ([view isKindOfClass:UITextField.class]) {
 
-        currentText = ((UITextField *)view).text;
+        currentText =
+            ((UITextField *)view).text;
 
     } else if ([view isKindOfClass:UITextView.class]) {
 
-        currentText = ((UITextView *)view).text;
+        currentText =
+            ((UITextView *)view).text;
 
     } else if ([view isKindOfClass:UIButton.class]) {
 
@@ -624,7 +791,9 @@
     [alert addTextFieldWithConfigurationHandler:
         ^(UITextField *textField) {
 
-        textField.text = currentText;
+        textField.text =
+            currentText;
+
         textField.clearButtonMode =
             UITextFieldViewModeWhileEditing;
     }];
@@ -643,6 +812,8 @@
             style:UIAlertActionStyleDefault
             handler:^(UIAlertAction *action) {
 
+        (void)action;
+
         __strong typeof(weakSelf) self = weakSelf;
 
         if (!self) {
@@ -652,28 +823,43 @@
         NSString *replacement =
             alert.textFields.firstObject.text ?: @"";
 
-        UIView *selectedView = self.selectedView;
+        UIView *selectedView =
+            self.selectedView;
+
+        if (!selectedView) {
+            return;
+        }
+
+        NSString *propertyName = nil;
 
         if ([selectedView isKindOfClass:UILabel.class]) {
 
             ((UILabel *)selectedView).text =
                 replacement;
 
+            propertyName = @"text";
+
         } else if ([selectedView isKindOfClass:UITextField.class]) {
 
             ((UITextField *)selectedView).text =
                 replacement;
+
+            propertyName = @"text";
 
         } else if ([selectedView isKindOfClass:UITextView.class]) {
 
             ((UITextView *)selectedView).text =
                 replacement;
 
+            propertyName = @"text";
+
         } else if ([selectedView isKindOfClass:UIButton.class]) {
 
             [(UIButton *)selectedView
                 setTitle:replacement
                 forState:UIControlStateNormal];
+
+            propertyName = @"title";
 
         } else {
 
@@ -690,7 +876,7 @@
             NSStringFromClass(selectedView.class);
 
         change.propertyName =
-            @"text";
+            propertyName;
 
         change.originalValue =
             currentText;
@@ -718,9 +904,11 @@
         return;
     }
 
-    BOOL oldHidden = view.hidden;
+    BOOL oldHidden =
+        view.hidden;
 
-    view.hidden = !view.hidden;
+    view.hidden =
+        !view.hidden;
 
     MRzefvUIChange *change =
         [[MRzefvUIChange alloc] init];
@@ -786,6 +974,18 @@
         @"Justified"
     ];
 
+    /*
+     * NSTextAlignment values are not guaranteed to equal the
+     * visual menu indexes. Keep an explicit mapping.
+     */
+    NSArray<NSNumber *> *values = @[
+        @(NSTextAlignmentNatural),
+        @(NSTextAlignmentLeft),
+        @(NSTextAlignmentCenter),
+        @(NSTextAlignmentRight),
+        @(NSTextAlignmentJustified)
+    ];
+
     UIAlertController *alert =
         [UIAlertController
             alertControllerWithTitle:@"Text Alignment"
@@ -798,20 +998,26 @@
          index < names.count;
          index++) {
 
+        NSString *name =
+            names[index];
+
+        NSTextAlignment newAlignment =
+            (NSTextAlignment)
+                values[index].integerValue;
+
         [alert addAction:
             [UIAlertAction
-                actionWithTitle:names[index]
+                actionWithTitle:name
                 style:UIAlertActionStyleDefault
                 handler:^(UIAlertAction *action) {
+
+            (void)action;
 
             __strong typeof(weakSelf) self = weakSelf;
 
             if (!self) {
                 return;
             }
-
-            NSTextAlignment newAlignment =
-                (NSTextAlignment)index;
 
             if ([view isKindOfClass:UILabel.class]) {
 
@@ -842,11 +1048,13 @@
                 @"textAlignment";
 
             change.originalValue =
-                [NSString stringWithFormat:@"%ld",
+                [NSString
+                    stringWithFormat:@"%ld",
                     (long)alignment];
 
             change.replacementValue =
-                [NSString stringWithFormat:@"%ld",
+                [NSString
+                    stringWithFormat:@"%ld",
                     (long)newAlignment];
 
             change.alignment =
@@ -872,12 +1080,16 @@
         popover.sourceView =
             self.tableView;
 
+        CGRect sourceRect =
+            CGRectMake(
+                CGRectGetMidX(self.tableView.bounds),
+                CGRectGetMidY(self.tableView.bounds),
+                1.0,
+                1.0
+            );
+
         popover.sourceRect =
-            [self.tableView
-                rectForRowAtIndexPath:
-                    [NSIndexPath
-                        indexPathForRow:0
-                              inSection:0]];
+            sourceRect;
     }
 
     [self presentViewController:alert
@@ -895,7 +1107,8 @@
         return;
     }
 
-    CGRect oldFrame = view.frame;
+    CGRect oldFrame =
+        view.frame;
 
     UIAlertController *alert =
         [UIAlertController
@@ -906,19 +1119,27 @@
     [alert addTextFieldWithConfigurationHandler:
         ^(UITextField *textField) {
 
-        textField.placeholder = @"X offset";
+        textField.placeholder =
+            @"X offset";
+
         textField.keyboardType =
             UIKeyboardTypeNumbersAndPunctuation;
-        textField.text = @"0";
+
+        textField.text =
+            @"0";
     }];
 
     [alert addTextFieldWithConfigurationHandler:
         ^(UITextField *textField) {
 
-        textField.placeholder = @"Y offset";
+        textField.placeholder =
+            @"Y offset";
+
         textField.keyboardType =
             UIKeyboardTypeNumbersAndPunctuation;
-        textField.text = @"0";
+
+        textField.text =
+            @"0";
     }];
 
     __weak typeof(self) weakSelf = self;
@@ -935,6 +1156,8 @@
             style:UIAlertActionStyleDefault
             handler:^(UIAlertAction *action) {
 
+        (void)action;
+
         __strong typeof(weakSelf) self = weakSelf;
 
         if (!self) {
@@ -947,12 +1170,14 @@
         CGFloat dy =
             [alert.textFields[1].text doubleValue];
 
-        CGRect newFrame = oldFrame;
+        CGRect newFrame =
+            oldFrame;
 
         newFrame.origin.x += dx;
         newFrame.origin.y += dy;
 
-        view.frame = newFrame;
+        view.frame =
+            newFrame;
 
         MRzefvUIChange *change =
             [[MRzefvUIChange alloc] init];
@@ -965,6 +1190,16 @@
 
         change.propertyName =
             @"frame";
+
+        /*
+         * Store the original frame so resetPreview can actually
+         * restore the view.
+         */
+        change.originalValue =
+            NSStringFromCGRect(oldFrame);
+
+        change.replacementValue =
+            NSStringFromCGRect(newFrame);
 
         change.frame =
             newFrame;
@@ -983,7 +1218,8 @@
 
 - (void)addText {
 
-    UIView *container = self.selectedView;
+    UIView *container =
+        self.selectedView;
 
     if (!container) {
         return;
@@ -998,7 +1234,8 @@
     [alert addTextFieldWithConfigurationHandler:
         ^(UITextField *textField) {
 
-        textField.placeholder = @"Text";
+        textField.placeholder =
+            @"Text";
     }];
 
     __weak typeof(self) weakSelf = self;
@@ -1015,6 +1252,8 @@
             style:UIAlertActionStyleDefault
             handler:^(UIAlertAction *action) {
 
+        (void)action;
+
         __strong typeof(weakSelf) self = weakSelf;
 
         if (!self) {
@@ -1027,7 +1266,10 @@
         UILabel *label =
             [[UILabel alloc]
                 initWithFrame:
-                    CGRectMake(10, 10, 200, 30)];
+                    CGRectMake(10.0,
+                               10.0,
+                               200.0,
+                               30.0)];
 
         label.text =
             text;
@@ -1085,7 +1327,7 @@
     NSURL *documentsURL =
         [[[NSFileManager defaultManager]
             URLsForDirectory:NSDocumentDirectory
-            inDomains:NSUserDomainMask]
+                   inDomains:NSUserDomainMask]
             firstObject];
 
     if (!documentsURL) {
@@ -1100,16 +1342,19 @@
     NSError *error = nil;
 
     BOOL success =
-        [data writeToURL:profileURL
-                 options:NSDataWritingAtomic
-                   error:&error];
+        [data
+            writeToURL:profileURL
+               options:NSDataWritingAtomic
+                 error:&error];
 
     UIAlertController *alert = nil;
 
     if (success) {
 
-        NSLog(@"[MRzefv] Saved profile: %@",
-              profileURL.path);
+        NSLog(
+            @"[MRzefv] Saved profile: %@",
+            profileURL.path
+        );
 
         alert =
             [UIAlertController
@@ -1119,13 +1364,16 @@
 
     } else {
 
-        NSLog(@"[MRzefv] Failed to save profile: %@",
-              error);
+        NSLog(
+            @"[MRzefv] Failed to save profile: %@",
+            error
+        );
 
         alert =
             [UIAlertController
                 alertControllerWithTitle:@"Save Failed"
-                message:error.localizedDescription
+                message:
+                    error.localizedDescription ?: @"Unknown error."
                 preferredStyle:UIAlertControllerStyleAlert];
     }
 
@@ -1145,11 +1393,15 @@
 - (NSInteger)numberOfSectionsInTableView:
     (UITableView *)tableView {
 
+    (void)tableView;
+
     return 3;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView
  numberOfRowsInSection:(NSInteger)section {
+
+    (void)tableView;
 
     switch (section) {
 
@@ -1169,6 +1421,8 @@
 
 - (NSString *)tableView:(UITableView *)tableView
  titleForHeaderInSection:(NSInteger)section {
+
+    (void)tableView;
 
     switch (section) {
 
@@ -1192,7 +1446,7 @@
     UITableViewCell *cell =
         [tableView
             dequeueReusableCellWithIdentifier:@"MRzefvCell"
-            forIndexPath:indexPath];
+                                  forIndexPath:indexPath];
 
     cell.accessoryType =
         UITableViewCellAccessoryDisclosureIndicator;
@@ -1297,17 +1551,18 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
 
     [tableView
         deselectRowAtIndexPath:indexPath
-        animated:YES];
+                     animated:YES];
 
     switch (indexPath.section) {
 
-        case 0:
+        case 0: {
 
             [self beginViewSelection];
 
             break;
+        }
 
-        case 1:
+        case 1: {
 
             if (!self.selectedView) {
                 return;
@@ -1340,12 +1595,14 @@ didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
             }
 
             break;
+        }
 
-        case 2:
+        case 2: {
 
             [self saveCurrentProfile];
 
             break;
+        }
 
         default:
             break;
