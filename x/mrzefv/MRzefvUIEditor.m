@@ -10,6 +10,8 @@
 
 #import "AVX512ExplorerViewController.h"
 
+#import <objc/runtime.h>
+
 #pragma mark - MRzefvUIChange
 
 @implementation MRzefvUIChange
@@ -53,35 +55,36 @@
 }
 
 - (NSDictionary *)dictionaryRepresentation {
-    NSMutableArray *changeObjects = [NSMutableArray array];
+    NSMutableArray *serializedChanges = [NSMutableArray arrayWithCapacity:self.changes.count];
 
     for (MRzefvUIChange *change in self.changes) {
         NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
 
         dictionary[@"type"] = @(change.type);
 
-        if (change.targetClass) {
+        if (change.targetClass.length) {
             dictionary[@"targetClass"] = change.targetClass;
         }
 
-        if (change.hierarchyPath) {
+        if (change.hierarchyPath.length) {
             dictionary[@"hierarchyPath"] = change.hierarchyPath;
         }
 
-        if (change.propertyName) {
+        if (change.propertyName.length) {
             dictionary[@"propertyName"] = change.propertyName;
         }
 
-        if (change.originalValue) {
+        if (change.originalValue.length) {
             dictionary[@"originalValue"] = change.originalValue;
         }
 
-        if (change.replacementValue) {
-            // Keep the external profile format as "newValue".
+        if (change.replacementValue.length) {
+            // Keep the JSON format named "newValue" even though the
+            // Objective-C property is called replacementValue.
             dictionary[@"newValue"] = change.replacementValue;
         }
 
-        if (!CGRectIsEmpty(change.frame)) {
+        if (change.type == MRzefvUIChangeTypeFrame) {
             dictionary[@"frame"] = @{
                 @"x": @(change.frame.origin.x),
                 @"y": @(change.frame.origin.y),
@@ -90,15 +93,17 @@
             };
         }
 
-        dictionary[@"alignment"] = @(change.alignment);
+        if (change.type == MRzefvUIChangeTypeAlignment) {
+            dictionary[@"alignment"] = @(change.alignment);
+        }
 
-        [changeObjects addObject:dictionary];
+        [serializedChanges addObject:dictionary];
     }
 
     return @{
         @"format": self.format ?: @"mrzefv-ui-profile",
         @"version": @(self.version),
-        @"changes": changeObjects
+        @"changes": serializedChanges
     };
 }
 
@@ -126,22 +131,18 @@
 
 @property (nonatomic, strong) MRzefvUIProfile *profile;
 
-@property (nonatomic, weak) AVX512ExplorerViewController *explorerViewController;
-
-@property (nonatomic, weak) UIView *previewView;
-
-@property (nonatomic) BOOL observingSelection;
-
 @end
 
 @implementation MRzefvUIEditorController
+
+#pragma mark - Lifecycle
 
 - (instancetype)init {
     self = [super initWithStyle:UITableViewStyleInsetGrouped];
 
     if (self) {
         _profile = [[MRzefvUIProfile alloc] init];
-        _observingSelection = NO;
+        self.title = @"MRzefv UI Editor";
     }
 
     return self;
@@ -152,150 +153,213 @@
 
     self.title = @"MRzefv UI Editor";
 
-    self.navigationItem.largeTitleDisplayMode =
-        UINavigationItemLargeTitleDisplayModeNever;
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave
+                                                      target:self
+                                                      action:@selector(saveCurrentProfile)];
 
-    [self beginObservingExplorerSelection];
+    [self.tableView registerClass:UITableViewCell.class
+           forCellReuseIdentifier:@"MRzefvCell"];
 }
 
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
+#pragma mark - Explorer Lookup
 
-    [self locateExplorerViewController];
-    [self beginObservingExplorerSelection];
+/// Walks the presentation hierarchy until the AVX512 explorer is found.
+///
+/// MRzefv is normally presented as a tool from the existing Explorer, so
+/// this avoids creating a second selection system or another window.
+- (AVX512ExplorerViewController *)avx512ExplorerViewController {
+    UIWindow *keyWindow = nil;
 
-    [self.tableView reloadData];
-}
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class]) {
+                continue;
+            }
 
-- (void)viewDidDisappear:(BOOL)animated {
-    [super viewDidDisappear:animated];
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
 
-    /*
-     * Do not remove the observer here.
-     *
-     * The editor may temporarily disappear while AVX512 Select mode
-     * is being used. The controller needs to continue receiving the
-     * selectedView notification when the live view is selected.
-     */
-}
+            if (windowScene.activationState == UISceneActivationStateUnattached) {
+                continue;
+            }
 
-- (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
-}
+            for (UIWindow *window in windowScene.windows) {
+                if (window.isKeyWindow) {
+                    keyWindow = window;
+                    break;
+                }
+            }
 
-#pragma mark - Explorer bridge
+            if (keyWindow) {
+                break;
+            }
+        }
+    }
 
-- (void)locateExplorerViewController {
-    UIViewController *controller = self;
+    if (!keyWindow) {
+        keyWindow = UIApplication.sharedApplication.keyWindow;
+    }
+
+    UIViewController *controller = keyWindow.rootViewController;
 
     while (controller) {
-        if ([controller isKindOfClass:[AVX512ExplorerViewController class]]) {
-            self.explorerViewController =
-                (AVX512ExplorerViewController *)controller;
-            return;
+        if ([controller isKindOfClass:AVX512ExplorerViewController.class]) {
+            return (AVX512ExplorerViewController *)controller;
         }
 
-        controller = controller.parentViewController;
-    }
+        UIViewController *next = nil;
 
-    /*
-     * The editor is normally presented by the explorer rather than
-     * being embedded inside it, so walk the presentation chain too.
-     */
-    controller = self.presentingViewController;
-
-    while (controller) {
-        if ([controller isKindOfClass:[AVX512ExplorerViewController class]]) {
-            self.explorerViewController =
-                (AVX512ExplorerViewController *)controller;
-            return;
+        if (controller.presentedViewController) {
+            next = controller.presentedViewController;
+        } else if (controller.navigationController &&
+                   controller.navigationController != controller) {
+            next = controller.navigationController;
+        } else if (controller.childViewControllers.count > 0) {
+            next = controller.childViewControllers.lastObject;
         }
 
-        controller = controller.presentingViewController;
+        if (!next || next == controller) {
+            break;
+        }
+
+        controller = next;
     }
 
-    /*
-     * Search the application windows as a final fallback.
-     */
-    for (UIWindow *window in UIApplication.sharedApplication.windows) {
-        UIViewController *root = window.rootViewController;
+    return nil;
+}
 
-        if ([root isKindOfClass:[AVX512ExplorerViewController class]]) {
-            self.explorerViewController =
-                (AVX512ExplorerViewController *)root;
-            return;
+/// Searches the application's controller hierarchy more broadly.
+///
+/// This is useful when the editor itself is currently presented by the
+/// Explorer and therefore the Explorer is not the top-most controller.
+- (AVX512ExplorerViewController *)findExplorerFromViewController:(UIViewController *)controller {
+    if (!controller) {
+        return nil;
+    }
+
+    if ([controller isKindOfClass:AVX512ExplorerViewController.class]) {
+        return (AVX512ExplorerViewController *)controller;
+    }
+
+    if (controller.presentingViewController) {
+        AVX512ExplorerViewController *explorer =
+            [self findExplorerFromViewController:controller.presentingViewController];
+
+        if (explorer) {
+            return explorer;
         }
     }
+
+    if (controller.navigationController &&
+        controller.navigationController != controller) {
+        AVX512ExplorerViewController *explorer =
+            [self findExplorerFromViewController:controller.navigationController];
+
+        if (explorer) {
+            return explorer;
+        }
+    }
+
+    for (UIViewController *child in controller.childViewControllers) {
+        AVX512ExplorerViewController *explorer =
+            [self findExplorerFromViewController:child];
+
+        if (explorer) {
+            return explorer;
+        }
+    }
+
+    return nil;
 }
 
-- (void)beginObservingExplorerSelection {
-    if (self.observingSelection) {
-        return;
-    }
-
-    [[NSNotificationCenter defaultCenter]
-        addObserver:self
-           selector:@selector(explorerSelectedViewDidChange:)
-               name:AVX512ExplorerSelectedViewDidChangeNotification
-             object:nil];
-
-    self.observingSelection = YES;
-
-    [self locateExplorerViewController];
-
-    if (self.explorerViewController.selectedView) {
-        self.selectedView = self.explorerViewController.selectedView;
-    }
-}
-
-- (void)explorerSelectedViewDidChange:(NSNotification *)notification {
-    AVX512ExplorerViewController *explorer =
-        notification.object;
-
-    if (![explorer isKindOfClass:[AVX512ExplorerViewController class]]) {
-        return;
-    }
-
-    self.explorerViewController = explorer;
-
-    UIView *selectedView =
-        notification.userInfo[@"selectedView"];
-
-    if ((id)selectedView == [NSNull null]) {
-        selectedView = nil;
-    }
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self.selectedView = selectedView;
-
-        [self.tableView reloadSections:
-            [NSIndexSet indexSetWithIndex:0]
-                          withRowAnimation:UITableViewRowAnimationAutomatic];
-    });
-}
-
-#pragma mark - Selection
+#pragma mark - MRzefv Selection Handoff
 
 - (void)beginViewSelection {
-    [self locateExplorerViewController];
-
     AVX512ExplorerViewController *explorer =
-        self.explorerViewController;
+        [self findExplorerFromViewController:self];
 
     if (!explorer) {
-        NSLog(@"[MRzefv] Could not locate AVX512 explorer.");
+        explorer = [self avx512ExplorerViewController];
+    }
+
+    if (!explorer) {
+        UIAlertController *alert =
+            [UIAlertController alertControllerWithTitle:@"MRzefv UI Editor"
+                                                message:@"The AVX512 live-view explorer could not be found."
+                                         preferredStyle:UIAlertControllerStyleAlert];
+
+        [alert addAction:
+            [UIAlertAction actionWithTitle:@"OK"
+                                     style:UIAlertActionStyleDefault
+                                   handler:nil]];
+
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+
+    /*
+     The Explorer owns the real selection system.
+
+     Calling this method causes the Explorer to:
+       - dismiss the currently presented tool (this editor),
+       - activate its existing Select mode,
+       - wait for the user's live-view tap,
+       - call this completion with the selected UIView.
+
+     MRzefv does not perform its own hit testing.
+     */
+    [explorer beginLiveViewSelectionWithCompletion:^(UIView *selectedView) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) self = weakSelf;
+
+            if (!self || !selectedView) {
+                return;
+            }
+
+            self.selectedView = selectedView;
+
+            /*
+             The Explorer dismissed us before entering Select mode.
+             Re-present the editor after the selection has completed.
+             */
+            [self presentEditorAfterSelectionFromExplorer:explorer];
+        });
+    }];
+}
+
+- (void)presentEditorAfterSelectionFromExplorer:(AVX512ExplorerViewController *)explorer {
+    if (!explorer) {
         return;
     }
 
     /*
-     * This is the important part:
-     *
-     * MRzefv does NOT perform its own hit testing.
-     *
-     * AVX512/FLEX owns selection, outlines, hit testing and
-     * selectedView. We simply activate that existing Select mode.
+     The editor may still be in the middle of dismissal/presentation
+     transitions. Wait until the Explorer is back on screen.
      */
-    [explorer toggleSelectTool];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *presenter = explorer;
+
+        /*
+         If the Explorer itself is currently covered by another controller,
+         wait rather than presenting into the wrong hierarchy.
+         */
+        if (presenter.presentedViewController) {
+            return;
+        }
+
+        UINavigationController *navigationController =
+            [[UINavigationController alloc] initWithRootViewController:self];
+
+        navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
+
+        [explorer presentViewController:navigationController
+                               animated:YES
+                             completion:^{
+            [self.tableView reloadData];
+        }];
+    });
 }
 
 #pragma mark - Preview
@@ -304,63 +368,100 @@
     UIView *view = self.selectedView;
 
     if (!view) {
-        [self showMessage:@"Select a live view first."];
         return;
     }
 
-    self.previewView = view;
+    NSLog(@"[MRzefv] Beginning live preview for %@", view);
 
-    NSLog(@"[MRzefv] Preview started for %@",
-          NSStringFromClass(view.class));
-
-    [self.tableView reloadData];
+    /*
+     Keep the preview intentionally lightweight here.
+     Changes are applied directly to the selected live UIView and recorded
+     in the profile so they can later be exported into a generated dylib.
+     */
 }
 
 - (void)resetPreview {
-    self.previewView = nil;
+    UIView *view = self.selectedView;
 
-    NSLog(@"[MRzefv] Preview reset.");
+    if (!view) {
+        return;
+    }
+
+    /*
+     Restore only the currently selected view's recorded properties.
+     */
+    for (MRzefvUIChange *change in self.profile.changes.reverseObjectEnumerator) {
+        if (change.targetClass.length &&
+            ![NSStringFromClass(view.class) isEqualToString:change.targetClass]) {
+            continue;
+        }
+
+        if (change.type == MRzefvUIChangeTypeText &&
+            change.propertyName.length &&
+            change.originalValue) {
+
+            if ([view isKindOfClass:UILabel.class] &&
+                [change.propertyName isEqualToString:@"text"]) {
+                ((UILabel *)view).text = change.originalValue;
+            } else if ([view isKindOfClass:UITextField.class] &&
+                       [change.propertyName isEqualToString:@"text"]) {
+                ((UITextField *)view).text = change.originalValue;
+            } else if ([view isKindOfClass:UITextView.class] &&
+                       [change.propertyName isEqualToString:@"text"]) {
+                ((UITextView *)view).text = change.originalValue;
+            } else if ([view isKindOfClass:UIButton.class] &&
+                       [change.propertyName isEqualToString:@"title"]) {
+                [(UIButton *)view setTitle:change.originalValue
+                                  forState:UIControlStateNormal];
+            }
+        }
+
+        if (change.type == MRzefvUIChangeTypeHidden) {
+            view.hidden = NO;
+        }
+    }
+
+    [self.profile removeAllChanges];
 
     [self.tableView reloadData];
 }
 
-#pragma mark - Editing
+#pragma mark - Text Editing
 
 - (void)changeText {
     UIView *view = self.selectedView;
 
     if (!view) {
-        [self showMessage:@"Select a view first."];
         return;
     }
 
     NSString *currentText = nil;
 
-    if ([view isKindOfClass:[UILabel class]]) {
+    if ([view isKindOfClass:UILabel.class]) {
         currentText = ((UILabel *)view).text;
-    } else if ([view isKindOfClass:[UITextField class]]) {
+    } else if ([view isKindOfClass:UITextField.class]) {
         currentText = ((UITextField *)view).text;
-    } else if ([view isKindOfClass:[UITextView class]]) {
+    } else if ([view isKindOfClass:UITextView.class]) {
         currentText = ((UITextView *)view).text;
-    } else if ([view isKindOfClass:[UIButton class]]) {
-        currentText =
-            [((UIButton *)view) titleForState:UIControlStateNormal];
+    } else if ([view isKindOfClass:UIButton.class]) {
+        currentText = [((UIButton *)view) titleForState:UIControlStateNormal];
     }
 
     if (!currentText) {
-        [self showMessage:@"The selected view does not expose editable text."];
-        return;
+        currentText = @"";
     }
 
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Change Text"
-                                            message:NSStringFromClass(view.class)
+                                            message:@"Enter replacement text."
                                      preferredStyle:UIAlertControllerStyleAlert];
 
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
         textField.text = currentText;
-        textField.placeholder = @"New text";
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
     }];
+
+    __weak typeof(self) weakSelf = self;
 
     [alert addAction:
         [UIAlertAction actionWithTitle:@"Cancel"
@@ -371,171 +472,143 @@
         [UIAlertAction actionWithTitle:@"Apply"
                                  style:UIAlertActionStyleDefault
                                handler:^(UIAlertAction *action) {
+        __strong typeof(weakSelf) self = weakSelf;
 
-        NSString *newText =
+        if (!self) {
+            return;
+        }
+
+        NSString *replacement =
             alert.textFields.firstObject.text ?: @"";
 
-        MRzefvUIChange *change =
-            [[MRzefvUIChange alloc] init];
+        UIView *selectedView = self.selectedView;
+
+        if ([selectedView isKindOfClass:UILabel.class]) {
+            ((UILabel *)selectedView).text = replacement;
+        } else if ([selectedView isKindOfClass:UITextField.class]) {
+            ((UITextField *)selectedView).text = replacement;
+        } else if ([selectedView isKindOfClass:UITextView.class]) {
+            ((UITextView *)selectedView).text = replacement;
+        } else if ([selectedView isKindOfClass:UIButton.class]) {
+            [(UIButton *)selectedView setTitle:replacement
+                                      forState:UIControlStateNormal];
+        } else {
+            return;
+        }
+
+        MRzefvUIChange *change = [[MRzefvUIChange alloc] init];
 
         change.type = MRzefvUIChangeTypeText;
-        change.targetClass =
-            NSStringFromClass(view.class);
+        change.targetClass = NSStringFromClass(selectedView.class);
         change.propertyName = @"text";
         change.originalValue = currentText;
-        change.replacementValue = newText;
+        change.replacementValue = replacement;
 
         [self.profile addChange:change];
 
-        if ([view isKindOfClass:[UILabel class]]) {
-            ((UILabel *)view).text = newText;
-        } else if ([view isKindOfClass:[UITextField class]]) {
-            ((UITextField *)view).text = newText;
-        } else if ([view isKindOfClass:[UITextView class]]) {
-            ((UITextView *)view).text = newText;
-        } else if ([view isKindOfClass:[UIButton class]]) {
-            [((UIButton *)view) setTitle:newText
-                                 forState:UIControlStateNormal];
-        }
-
         [self.tableView reloadData];
-    }]];
+    }];
 
     [self presentViewController:alert animated:YES completion:nil];
 }
+
+#pragma mark - Hidden
 
 - (void)toggleHidden {
     UIView *view = self.selectedView;
 
     if (!view) {
-        [self showMessage:@"Select a view first."];
         return;
     }
 
-    BOOL newHidden = !view.hidden;
+    BOOL oldHidden = view.hidden;
 
-    MRzefvUIChange *change =
-        [[MRzefvUIChange alloc] init];
+    view.hidden = !view.hidden;
+
+    MRzefvUIChange *change = [[MRzefvUIChange alloc] init];
 
     change.type = MRzefvUIChangeTypeHidden;
     change.targetClass = NSStringFromClass(view.class);
     change.propertyName = @"hidden";
-    change.originalValue = view.hidden ? @"YES" : @"NO";
-    change.replacementValue = newHidden ? @"YES" : @"NO";
+    change.originalValue = oldHidden ? @"YES" : @"NO";
+    change.replacementValue = view.hidden ? @"YES" : @"NO";
 
     [self.profile addChange:change];
 
-    view.hidden = newHidden;
-
     [self.tableView reloadData];
 }
+
+#pragma mark - Alignment
 
 - (void)changeAlignment {
     UIView *view = self.selectedView;
 
     if (!view) {
-        [self showMessage:@"Select a view first."];
         return;
     }
 
-    NSTextAlignment currentAlignment = NSTextAlignmentNatural;
+    NSTextAlignment alignment = NSTextAlignmentNatural;
 
-    if ([view isKindOfClass:[UILabel class]]) {
-        currentAlignment = ((UILabel *)view).textAlignment;
-    } else if ([view isKindOfClass:[UITextField class]]) {
-        currentAlignment = ((UITextField *)view).textAlignment;
-    } else if ([view isKindOfClass:[UITextView class]]) {
-        currentAlignment = ((UITextView *)view).textAlignment;
+    if ([view isKindOfClass:UILabel.class]) {
+        alignment = ((UILabel *)view).textAlignment;
+    } else if ([view isKindOfClass:UITextField.class]) {
+        alignment = ((UITextField *)view).textAlignment;
+    } else if ([view isKindOfClass:UITextView.class]) {
+        alignment = ((UITextView *)view).textAlignment;
     } else {
-        [self showMessage:@"The selected view does not support text alignment."];
         return;
     }
+
+    NSArray<NSString *> *names = @[
+        @"Natural",
+        @"Left",
+        @"Center",
+        @"Right",
+        @"Justified"
+    ];
 
     UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"Alignment"
+        [UIAlertController alertControllerWithTitle:@"Text Alignment"
                                             message:nil
                                      preferredStyle:UIAlertControllerStyleActionSheet];
 
-    NSArray<NSDictionary *> *options = @[
-        @{@"name": @"Natural", @"value": @(NSTextAlignmentNatural)},
-        @{@"name": @"Left",    @"value": @(NSTextAlignmentLeft)},
-        @{@"name": @"Center",  @"value": @(NSTextAlignmentCenter)},
-        @{@"name": @"Right",   @"value": @(NSTextAlignmentRight)}
-    ];
+    __weak typeof(self) weakSelf = self;
 
-    for (NSDictionary *option in options) {
+    for (NSUInteger index = 0; index < names.count; index++) {
         [alert addAction:
-            [UIAlertAction
-                actionWithTitle:option[@"name"]
-                          style:UIAlertActionStyleDefault
-                        handler:^(UIAlertAction *action) {
+            [UIAlertAction actionWithTitle:names[index]
+                                     style:UIAlertActionStyleDefault
+                                   handler:^(UIAlertAction *action) {
+            __strong typeof(weakSelf) self = weakSelf;
 
-            NSTextAlignment alignment =
-                [option[@"value"] integerValue];
+            if (!self) {
+                return;
+            }
 
-            MRzefvUIChange *change =
-                [[MRzefvUIChange alloc] init];
+            NSTextAlignment newAlignment = (NSTextAlignment)index;
+
+            if ([view isKindOfClass:UILabel.class]) {
+                ((UILabel *)view).textAlignment = newAlignment;
+            } else if ([view isKindOfClass:UITextField.class]) {
+                ((UITextField *)view).textAlignment = newAlignment;
+            } else if ([view isKindOfClass:UITextView.class]) {
+                ((UITextView *)view).textAlignment = newAlignment;
+            }
+
+            MRzefvUIChange *change = [[MRzefvUIChange alloc] init];
 
             change.type = MRzefvUIChangeTypeAlignment;
-            change.targetClass =
-                NSStringFromClass(view.class);
+            change.targetClass = NSStringFromClass(view.class);
             change.propertyName = @"textAlignment";
-            change.originalValue =
-                [NSString stringWithFormat:@"%ld",
-                 (long)currentAlignment];
-            change.replacementValue =
-                [NSString stringWithFormat:@"%ld",
-                 (long)alignment];
-            change.alignment = alignment;
+            change.originalValue = [NSString stringWithFormat:@"%ld",
+                                    (long)alignment];
+            change.replacementValue = [NSString stringWithFormat:@"%ld",
+                                       (long)newAlignment];
+            change.alignment = newAlignment;
 
             [self.profile addChange:change];
 
-            if ([view isKindOfClass:[UILabel class]]) {
-                ((UILabel *)view).textAlignment = alignment;
-            } else if ([view isKindOfClass:[UITextField class]]) {
-                ((UITextField *)view).textAlignment = alignment;
-            } else if ([view isKindOfClass:[UITextView class]]) {
-                ((UITextView *)view).textAlignment = alignment;
-            }
-
             [self.tableView reloadData];
-        }]];
-    }
-
-    [alert addAction:
-        [UIAlertAction actionWithTitle:@"Cancel"
-                                 style:UIAlertActionStyleCancel
-                               handler:nil]];
-
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)changeFrame {
-    UIView *view = self.selectedView;
-
-    if (!view) {
-        [self showMessage:@"Select a view first."];
-        return;
-    }
-
-    CGRect oldFrame = view.frame;
-
-    UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:@"Frame"
-                                            message:@"Enter x, y, width and height."
-                                     preferredStyle:UIAlertControllerStyleAlert];
-
-    NSArray<NSString *> *values = @[
-        [NSString stringWithFormat:@"%.1f", oldFrame.origin.x],
-        [NSString stringWithFormat:@"%.1f", oldFrame.origin.y],
-        [NSString stringWithFormat:@"%.1f", oldFrame.size.width],
-        [NSString stringWithFormat:@"%.1f", oldFrame.size.height]
-    ];
-
-    for (NSString *value in values) {
-        [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-            field.keyboardType = UIKeyboardTypeDecimalPad;
-            field.text = value;
         }];
     }
 
@@ -544,63 +617,106 @@
                                  style:UIAlertActionStyleCancel
                                handler:nil]];
 
+    alert.popoverPresentationController.sourceView = self.tableView;
+    alert.popoverPresentationController.sourceRect =
+        [self.tableView rectForRowAtIndexPath:
+            [NSIndexPath indexPathForRow:0 inSection:0]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+#pragma mark - Frame
+
+- (void)changeFrame {
+    UIView *view = self.selectedView;
+
+    if (!view) {
+        return;
+    }
+
+    CGRect oldFrame = view.frame;
+
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"Move View"
+                                            message:@"Enter X and Y offsets."
+                                     preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = @"X offset";
+        textField.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        textField.text = @"0";
+    }];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = @"Y offset";
+        textField.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        textField.text = @"0";
+    }];
+
+    __weak typeof(self) weakSelf = self;
+
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"Cancel"
+                                 style:UIAlertActionStyleCancel
+                               handler:nil]];
+
     [alert addAction:
         [UIAlertAction actionWithTitle:@"Apply"
                                  style:UIAlertActionStyleDefault
                                handler:^(UIAlertAction *action) {
+        __strong typeof(weakSelf) self = weakSelf;
 
-        NSArray<UITextField *> *fields = alert.textFields;
+        if (!self) {
+            return;
+        }
 
-        CGFloat x =
-            fields.count > 0 ? fields[0].text.doubleValue : oldFrame.origin.x;
+        CGFloat dx =
+            [alert.textFields[0].text doubleValue];
 
-        CGFloat y =
-            fields.count > 1 ? fields[1].text.doubleValue : oldFrame.origin.y;
+        CGFloat dy =
+            [alert.textFields[1].text doubleValue];
 
-        CGFloat width =
-            fields.count > 2 ? fields[2].text.doubleValue : oldFrame.size.width;
+        CGRect newFrame = oldFrame;
 
-        CGFloat height =
-            fields.count > 3 ? fields[3].text.doubleValue : oldFrame.size.height;
+        newFrame.origin.x += dx;
+        newFrame.origin.y += dy;
 
-        CGRect newFrame =
-            CGRectMake(x, y, width, height);
+        view.frame = newFrame;
 
-        MRzefvUIChange *change =
-            [[MRzefvUIChange alloc] init];
+        MRzefvUIChange *change = [[MRzefvUIChange alloc] init];
 
         change.type = MRzefvUIChangeTypeFrame;
-        change.targetClass =
-            NSStringFromClass(view.class);
+        change.targetClass = NSStringFromClass(view.class);
         change.propertyName = @"frame";
         change.frame = newFrame;
 
         [self.profile addChange:change];
 
-        view.frame = newFrame;
-
         [self.tableView reloadData];
-    }]];
+    }];
 
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)addText {
-    UIView *parent = self.selectedView;
+#pragma mark - Add Text
 
-    if (!parent) {
-        [self showMessage:@"Select a parent view first."];
+- (void)addText {
+    UIView *container = self.selectedView;
+
+    if (!container) {
         return;
     }
 
     UIAlertController *alert =
         [UIAlertController alertControllerWithTitle:@"Add Text"
-                                            message:@"Add a UILabel to the selected view."
+                                            message:@"Enter text for the new label."
                                      preferredStyle:UIAlertControllerStyleAlert];
 
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
-        field.placeholder = @"Text";
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = @"Text";
     }];
+
+    __weak typeof(self) weakSelf = self;
 
     [alert addAction:
         [UIAlertAction actionWithTitle:@"Cancel"
@@ -611,36 +727,36 @@
         [UIAlertAction actionWithTitle:@"Add"
                                  style:UIAlertActionStyleDefault
                                handler:^(UIAlertAction *action) {
+        __strong typeof(weakSelf) self = weakSelf;
+
+        if (!self) {
+            return;
+        }
 
         NSString *text =
-            alert.textFields.firstObject.text ?: @"New Text";
+            alert.textFields.firstObject.text ?: @"";
 
-        UILabel *label =
-            [[UILabel alloc] initWithFrame:CGRectMake(20, 20, 160, 40)];
+        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 30)];
 
         label.text = text;
         label.textColor = UIColor.labelColor;
-        label.backgroundColor =
-            [UIColor colorWithWhite:0 alpha:0.08];
-        label.textAlignment = NSTextAlignmentCenter;
+        label.backgroundColor = UIColor.clearColor;
         label.userInteractionEnabled = YES;
 
-        [parent addSubview:label];
+        [container addSubview:label];
 
-        MRzefvUIChange *change =
-            [[MRzefvUIChange alloc] init];
+        MRzefvUIChange *change = [[MRzefvUIChange alloc] init];
 
         change.type = MRzefvUIChangeTypeAddText;
-        change.targetClass =
-            NSStringFromClass(parent.class);
-        change.propertyName = @"subview";
+        change.targetClass = NSStringFromClass(container.class);
+        change.propertyName = @"subviews";
         change.replacementValue = text;
         change.frame = label.frame;
 
         [self.profile addChange:change];
 
         [self.tableView reloadData];
-    }]];
+    }];
 
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -651,32 +767,48 @@
     NSData *data = [self.profile JSONData];
 
     if (!data) {
-        [self showMessage:@"Could not serialize the MRzefv profile."];
         return;
     }
 
     NSURL *documentsURL =
         [[[NSFileManager defaultManager]
-            URLsForDirectory:NSDocumentDirectory
-                   inDomains:NSUserDomainMask] firstObject];
+          URLsForDirectory:NSDocumentDirectory
+          inDomains:NSUserDomainMask] firstObject];
 
-    NSURL *fileURL =
+    NSURL *profileURL =
         [documentsURL URLByAppendingPathComponent:@"MRzefv-ui-profile.json"];
 
     NSError *error = nil;
 
-    if (![data writeToURL:fileURL options:NSDataWritingAtomic error:&error]) {
-        [self showMessage:
-            [NSString stringWithFormat:@"Save failed: %@",
-             error.localizedDescription]];
-        return;
+    BOOL success =
+        [data writeToURL:profileURL
+                 options:NSDataWritingAtomic
+                   error:&error];
+
+    UIAlertController *alert = nil;
+
+    if (success) {
+        NSLog(@"[MRzefv] Saved profile: %@", profileURL.path);
+
+        alert =
+            [UIAlertController alertControllerWithTitle:@"Profile Saved"
+                                                message:profileURL.path
+                                         preferredStyle:UIAlertControllerStyleAlert];
+    } else {
+        NSLog(@"[MRzefv] Failed to save profile: %@", error);
+
+        alert =
+            [UIAlertController alertControllerWithTitle:@"Save Failed"
+                                                message:error.localizedDescription
+                                         preferredStyle:UIAlertControllerStyleAlert];
     }
 
-    NSLog(@"[MRzefv] Profile saved: %@", fileURL.path);
+    [alert addAction:
+        [UIAlertAction actionWithTitle:@"OK"
+                                 style:UIAlertActionStyleDefault
+                               handler:nil]];
 
-    [self showMessage:
-        [NSString stringWithFormat:@"Saved %lu changes.",
-         (unsigned long)self.profile.changes.count]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - UITableView
@@ -687,16 +819,15 @@
 
 - (NSInteger)tableView:(UITableView *)tableView
  numberOfRowsInSection:(NSInteger)section {
-
     switch (section) {
         case 0:
-            return 2;
+            return 1;
 
         case 1:
-            return 2;
+            return 5;
 
         case 2:
-            return 5;
+            return 1;
 
         default:
             return 0;
@@ -705,118 +836,85 @@
 
 - (NSString *)tableView:(UITableView *)tableView
  titleForHeaderInSection:(NSInteger)section {
-
     switch (section) {
         case 0:
             return @"Selection";
 
         case 1:
-            return @"Live Preview";
+            return @"Live Editor";
 
         case 2:
-            return @"Edit";
+            return @"Profile";
 
         default:
             return nil;
     }
 }
 
-- (UITableViewCell *)
-    tableView:(UITableView *)tableView
-    cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-
-    static NSString *identifier = @"MRzefvCell";
-
+- (UITableViewCell *)tableView:(UITableView *)tableView
+         cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell =
-        [tableView dequeueReusableCellWithIdentifier:identifier];
+        [tableView dequeueReusableCellWithIdentifier:@"MRzefvCell"
+                                        forIndexPath:indexPath];
 
-    if (!cell) {
-        cell =
-            [[UITableViewCell alloc]
-                initWithStyle:UITableViewCellStyleSubtitle
-                reuseIdentifier:identifier];
-    }
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    cell.textLabel.textColor = UIColor.labelColor;
 
-    cell.accessoryType = UITableViewCellAccessoryNone;
-    cell.textLabel.text = nil;
-    cell.detailTextLabel.text = nil;
+    switch (indexPath.section) {
+        case 0: {
+            cell.textLabel.text =
+                self.selectedView
+                    ? [NSString stringWithFormat:@"Selected: %@",
+                       NSStringFromClass(self.selectedView.class)]
+                    : @"Select Live View";
 
-    if (indexPath.section == 0) {
-
-        if (indexPath.row == 0) {
-            cell.textLabel.text = @"Select Live View";
             cell.imageView.image =
                 [UIImage systemImageNamed:@"scope"];
-        } else {
-            cell.textLabel.text = @"Selected View";
+            break;
+        }
 
-            UIView *view = self.selectedView;
+        case 1: {
+            NSArray<NSString *> *titles = @[
+                @"Change Text",
+                @"Hide / Show",
+                @"Alignment",
+                @"Move / Frame",
+                @"Add Text"
+            ];
 
-            if (view) {
-                cell.detailTextLabel.text =
-                    [NSString stringWithFormat:@"%@ <%p>",
-                     NSStringFromClass(view.class),
-                     view];
+            NSArray<NSString *> *icons = @[
+                @"character.cursor.ibeam",
+                @"eye.slash",
+                @"text.alignleft",
+                @"arrow.up.left.and.arrow.down.right",
+                @"plus.rectangle"
+            ];
 
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"checkmark.circle.fill"];
-            } else {
-                cell.detailTextLabel.text =
-                    @"No view selected";
+            cell.textLabel.text = titles[indexPath.row];
+            cell.imageView.image =
+                [UIImage systemImageNamed:icons[indexPath.row]];
 
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"circle"];
+            cell.accessoryType =
+                self.selectedView
+                    ? UITableViewCellAccessoryDisclosureIndicator
+                    : UITableViewCellAccessoryNone;
+
+            if (!self.selectedView) {
+                cell.textLabel.textColor =
+                    [UIColor secondaryLabelColor];
             }
+
+            break;
         }
 
-    } else if (indexPath.section == 1) {
-
-        if (indexPath.row == 0) {
-            cell.textLabel.text = @"Live Preview";
-            cell.detailTextLabel.text =
-                self.previewView ? @"Active" : @"Ready";
-
+        case 2:
+            cell.textLabel.text = @"Save Current Profile";
             cell.imageView.image =
-                [UIImage systemImageNamed:@"play.circle"];
-        } else {
-            cell.textLabel.text = @"Reset Preview";
-            cell.imageView.image =
-                [UIImage systemImageNamed:@"arrow.counterclockwise"];
-        }
+                [UIImage systemImageNamed:@"square.and.arrow.down"];
+            break;
 
-    } else {
-
-        switch (indexPath.row) {
-            case 0:
-                cell.textLabel.text = @"Change Text";
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"character.cursor.ibeam"];
-                break;
-
-            case 1:
-                cell.textLabel.text = @"Hide / Show";
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"eye"];
-                break;
-
-            case 2:
-                cell.textLabel.text = @"Alignment";
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"text.alignleft"];
-                break;
-
-            case 3:
-                cell.textLabel.text = @"Frame";
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"rectangle"];
-                break;
-
-            case 4:
-                cell.textLabel.text = @"Add Text";
-                cell.imageView.image =
-                    [UIImage systemImageNamed:@"plus.rectangle"];
-                break;
-        }
+        default:
+            break;
     }
 
     return cell;
@@ -824,69 +922,48 @@
 
 - (void)tableView:(UITableView *)tableView
 didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
-    if (indexPath.section == 0) {
-
-        if (indexPath.row == 0) {
-            [self beginViewSelection];
-        }
-
-        return;
-    }
-
-    if (indexPath.section == 1) {
-
-        if (indexPath.row == 0) {
-            [self beginPreview];
-        } else {
-            [self resetPreview];
-        }
-
-        return;
-    }
-
-    switch (indexPath.row) {
+    switch (indexPath.section) {
         case 0:
-            [self changeText];
+            [self beginViewSelection];
             break;
 
         case 1:
-            [self toggleHidden];
+            if (!self.selectedView) {
+                return;
+            }
+
+            switch (indexPath.row) {
+                case 0:
+                    [self changeText];
+                    break;
+
+                case 1:
+                    [self toggleHidden];
+                    break;
+
+                case 2:
+                    [self changeAlignment];
+                    break;
+
+                case 3:
+                    [self changeFrame];
+                    break;
+
+                case 4:
+                    [self addText];
+                    break;
+            }
             break;
 
         case 2:
-            [self changeAlignment];
+            [self saveCurrentProfile];
             break;
 
-        case 3:
-            [self changeFrame];
-            break;
-
-        case 4:
-            [self addText];
+        default:
             break;
     }
-}
-
-#pragma mark - Helpers
-
-- (void)showMessage:(NSString *)message {
-    UIAlertController *alert =
-        [UIAlertController
-            alertControllerWithTitle:@"MRzefv"
-                             message:message
-                      preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addAction:
-        [UIAlertAction actionWithTitle:@"OK"
-                                 style:UIAlertActionStyleDefault
-                               handler:nil]];
-
-    [self presentViewController:alert
-                       animated:YES
-                     completion:nil];
 }
 
 @end
