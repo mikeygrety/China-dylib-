@@ -22,7 +22,7 @@
 #import "FLEXViewControllersViewController.h"
 #import "NSUserDefaults+FLEX.h"
 
-// xFunctional modules of the functional-mod
+// xFunctional modules
 #import "x/ClassDump/UCClassDumpTool.h"
 #import "x/ClassDump/UCClassSearchViewController.h"
 #import "x/Disassembler/UCDisassembler.h"
@@ -36,41 +36,53 @@
 NSNotificationName const AVX512ExplorerSelectedViewDidChangeNotification =
     @"AVX512ExplorerSelectedViewDidChangeNotification";
 
+static NSString * const AVX512ExplorerSelectedViewUserInfoKey =
+    @"selectedView";
+
 typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     AVX512ExplorerModeDefault,
     AVX512ExplorerModeSelect,
     AVX512ExplorerModeMove
 };
 
-@interface AVX512ExplorerViewController () <AVX512HierarchyDelegate, UIAdaptivePresentationControllerDelegate>
+@interface AVX512ExplorerViewController ()
+    <AVX512HierarchyDelegate, UIAdaptivePresentationControllerDelegate>
 
 @property (nonatomic) AVX512ExplorerMode currentMode;
 
 @property (nonatomic) UIPanGestureRecognizer *movePanGR;
-
 @property (nonatomic) UITapGestureRecognizer *detailsTapGR;
 
 @property (nonatomic) CGRect selectedViewFrameBeforeDragging;
-
 @property (nonatomic) CGRect toolbarFrameBeforeDragging;
 
 @property (nonatomic) CGFloat selectedViewLastPanX;
 
 @property (nonatomic) NSDictionary<NSValue *, UIView *> *outlineViewsForVisibleViews;
-
 @property (nonatomic) NSArray<UIView *> *viewsAtTapPoint;
 
 @property (nonatomic) UIView *selectedView;
-
 @property (nonatomic) UIView *selectedViewOverlay;
 
-@property (nonatomic, readonly) UISelectionFeedbackGenerator *selectionFBG API_AVAILABLE(ios(10.0));
+@property (nonatomic, readonly)
+    UISelectionFeedbackGenerator *selectionFBG API_AVAILABLE(ios(10.0));
 
 @property (nonatomic, readonly) AVX512Window *window;
 
 @property (nonatomic) NSMutableSet<UIView *> *observedViews;
 
 @property (nonatomic) NSArray<UIMenuItem *> *appMenuItems;
+
+/*
+ * MRzefv live-selection handoff.
+ *
+ * When MRzefv requests a live selection, the editor is temporarily
+ * dismissed, Select mode is activated, and this completion remains
+ * pending until the existing AVX512/FLEX selection system chooses
+ * a UIView.
+ */
+@property (nonatomic, copy, nullable)
+    void (^pendingLiveSelectionCompletion)(UIView *selectedView);
 
 @end
 
@@ -80,7 +92,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 
 - (id)initWithNibName:(NSString *)nibNameOrNil
                bundle:(NSBundle *)nibBundleOrNil {
-    self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil];
+
+    self = [super initWithNibName:nibNameOrNil
+                            bundle:nibBundleOrNil];
 
     if (self) {
         self.observedViews = [NSMutableSet new];
@@ -90,11 +104,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)dealloc {
-    /*
-     * stopObservingView: removes the view from observedViews.
-     * Enumerate over a copy so the mutable set is not changed
-     * while it is being enumerated.
-     */
+
     NSArray<UIView *> *views =
         self.observedViews.allObjects;
 
@@ -102,59 +112,64 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         [self stopObservingView:view];
     }
 
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    self.pendingLiveSelectionCompletion = nil;
+
+    [[NSNotificationCenter defaultCenter]
+        removeObserver:self];
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    _explorerToolbar = [AVX512ExplorerToolbar new];
+    _explorerToolbar =
+        [AVX512ExplorerToolbar new];
 
     CGFloat toolbarOriginY =
         NSUserDefaults.standardUserDefaults.avx512_toolbarTopMargin;
 
-    CGRect safeArea = [self viewSafeArea];
+    CGRect safeArea =
+        [self viewSafeArea];
 
     CGSize toolbarSize =
-        [self.explorerToolbar sizeThatFits:
-            CGSizeMake(
-                CGRectGetWidth(self.view.bounds),
-                CGRectGetHeight(safeArea)
-            )
-        ];
+        [self.explorerToolbar
+            sizeThatFits:
+                CGSizeMake(
+                    CGRectGetWidth(self.view.bounds),
+                    CGRectGetHeight(safeArea)
+                )];
 
-    [self updateToolbarPositionWithUnconstrainedFrame:
-        CGRectMake(
-            CGRectGetMinX(safeArea),
-            toolbarOriginY,
-            toolbarSize.width,
-            toolbarSize.height
-        )
-    ];
+    [self
+        updateToolbarPositionWithUnconstrainedFrame:
+            CGRectMake(
+                CGRectGetMinX(safeArea),
+                toolbarOriginY,
+                toolbarSize.width,
+                toolbarSize.height
+            )];
 
     self.explorerToolbar.autoresizingMask =
         UIViewAutoresizingFlexibleWidth |
         UIViewAutoresizingFlexibleBottomMargin |
         UIViewAutoresizingFlexibleTopMargin;
 
-    [self.view addSubview:self.explorerToolbar];
+    [self.view
+        addSubview:self.explorerToolbar];
 
     [self setupToolbarActions];
     [self setupToolbarGestures];
 
     /*
-     * Existing AVX512/FLEX selection gesture.
+     * This remains the single live-view selection recognizer.
      *
-     * MRzefv does not create another selection recognizer.
-     * It receives the resulting selectedView through the
-     * AVX512ExplorerSelectedViewDidChangeNotification.
+     * MRzefv never installs its own hit-testing recognizer.
      */
     UITapGestureRecognizer *selectionTapGR =
         [[UITapGestureRecognizer alloc]
             initWithTarget:self
                     action:@selector(handleSelectionTap:)];
 
-    [self.view addGestureRecognizer:selectionTapGR];
+    [self.view
+        addGestureRecognizer:selectionTapGR];
 
     self.movePanGR =
         [[UIPanGestureRecognizer alloc]
@@ -164,18 +179,19 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     self.movePanGR.enabled =
         self.currentMode == AVX512ExplorerModeMove;
 
-    [self.view addGestureRecognizer:self.movePanGR];
+    [self.view
+        addGestureRecognizer:self.movePanGR];
 
     if (@available(iOS 10.0, *)) {
-        _selectionFBG = [UISelectionFeedbackGenerator new];
+        _selectionFBG =
+            [UISelectionFeedbackGenerator new];
     }
 
-    [NSNotificationCenter.defaultCenter
+    [[NSNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(keyboardShown:)
                name:UIKeyboardWillShowNotification
-             object:nil
-    ];
+             object:nil];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -184,9 +200,63 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [self updateButtonStates];
 }
 
+#pragma mark - MRzefv Live Selection Handoff
+
+- (void)beginLiveViewSelectionWithCompletion:
+    (void (^)(UIView *selectedView))completion {
+
+    NSParameterAssert(completion != nil);
+
+    /*
+     * Replace any stale request. There should only ever be one active
+     * MRzefv live-selection request at a time.
+     */
+    self.pendingLiveSelectionCompletion =
+        [completion copy];
+
+    /*
+     * Clear the previous selection first.
+     *
+     * This is important because the user may want to select the exact
+     * same UIView again. If _selectedView remained unchanged, the setter
+     * would not fire and the pending completion would never execute.
+     */
+    self.selectedView = nil;
+
+    /*
+     * The MRzefv editor is normally the currently presented controller.
+     * Dismiss it so touches can reach the actual application through
+     * the existing Explorer Select system.
+     */
+    UIViewController *presented =
+        self.presentedViewController;
+
+    void (^activateSelection)(void) = ^{
+        /*
+         * The Explorer now owns touch handling.
+         */
+        self.currentMode =
+            AVX512ExplorerModeSelect;
+
+        [self updateButtonStates];
+    };
+
+    if (presented) {
+
+        [self
+            dismissViewControllerAnimated:YES
+                               completion:activateSelection];
+
+    } else {
+
+        activateSelection();
+    }
+}
+
 #pragma mark - Rotation
 
 - (UIViewController *)viewControllerForRotationAndOrientation {
+
     UIViewController *viewController =
         AVX512Utility.appKeyWindow.rootViewController;
 
@@ -203,15 +273,19 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     SEL viewControllerSelector =
         NSSelectorFromString(viewControllerSelectorString);
 
-    if ([viewController respondsToSelector:viewControllerSelector]) {
+    if ([viewController
+            respondsToSelector:viewControllerSelector]) {
+
         viewController =
-            [viewController valueForKey:viewControllerSelectorString];
+            [viewController
+                valueForKey:viewControllerSelectorString];
     }
 
     return viewController;
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+
     UIViewController *viewControllerToAsk =
         [self viewControllerForRotationAndOrientation];
 
@@ -235,6 +309,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (BOOL)shouldAutorotate {
+
     UIViewController *viewControllerToAsk =
         [self viewControllerForRotationAndOrientation];
 
@@ -254,8 +329,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
        withTransitionCoordinator:
            (id<UIViewControllerTransitionCoordinator>)coordinator {
 
-    [super viewWillTransitionToSize:size
-          withTransitionCoordinator:coordinator];
+    [super
+        viewWillTransitionToSize:size
+        withTransitionCoordinator:coordinator];
 
     [coordinator
         animateAlongsideTransition:
@@ -275,7 +351,8 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         for (UIView *view in self.viewsAtTapPoint) {
 
             NSValue *key =
-                [NSValue valueWithNonretainedObject:view];
+                [NSValue
+                    valueWithNonretainedObject:view];
 
             UIView *outlineView =
                 self.outlineViewsForVisibleViews[key];
@@ -293,8 +370,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         if (self.selectedView) {
 
             self.selectedViewOverlay.frame =
-                [self frameInLocalCoordinatesForView:
-                    self.selectedView];
+                [self
+                    frameInLocalCoordinatesForView:
+                        self.selectedView];
 
             self.selectedViewOverlay.hidden = NO;
         }
@@ -304,54 +382,32 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 #pragma mark - Setter Overrides
 
 - (void)setSelectedView:(UIView *)selectedView {
+
     if (_selectedView == selectedView) {
         return;
     }
 
-    UIView *previousSelectedView = _selectedView;
+    UIView *previousSelectedView =
+        _selectedView;
 
-    /*
-     * Keep the existing AVX512/FLEX observer behavior.
-     */
     if (previousSelectedView &&
-        ![self.viewsAtTapPoint containsObject:previousSelectedView]) {
+        ![self.viewsAtTapPoint
+            containsObject:previousSelectedView]) {
 
         [self stopObservingView:previousSelectedView];
     }
 
     _selectedView = selectedView;
 
-    [self beginObservingView:selectedView];
+    if (selectedView) {
+        [self beginObservingView:selectedView];
+    }
 
-    /*
-     * MRzefv bridge.
-     *
-     * This is the canonical selected UIView used by the existing
-     * AVX512/FLEX explorer. Anything listening to this notification
-     * receives the exact live object selected by the explorer.
-     *
-     * No duplicate hit-testing is performed by MRzefv.
-     */
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:
-            AVX512ExplorerSelectedViewDidChangeNotification
-                      object:self
-                    userInfo:@{
-        @"selectedView":
-            selectedView ?: [NSNull null]
-    }];
-
-    /*
-     * Existing toolbar description.
-     */
     self.explorerToolbar.selectedViewDescription =
         [AVX512Utility
             descriptionForView:selectedView
             includingFrame:YES];
 
-    /*
-     * Existing deterministic selection color.
-     */
     self.explorerToolbar.selectedViewOverlayColor =
         [AVX512Utility
             consistentRandomColorForObject:selectedView];
@@ -363,12 +419,14 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
             self.selectedViewOverlay =
                 [UIView new];
 
-            self.selectedViewOverlay.userInteractionEnabled = NO;
+            self.selectedViewOverlay.userInteractionEnabled =
+                NO;
+
+            self.selectedViewOverlay.layer.borderWidth =
+                1.0;
 
             [self.view
                 addSubview:self.selectedViewOverlay];
-
-            self.selectedViewOverlay.layer.borderWidth = 1.0;
         }
 
         UIColor *outlineColor =
@@ -376,15 +434,15 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                 consistentRandomColorForObject:selectedView];
 
         self.selectedViewOverlay.backgroundColor =
-            [outlineColor colorWithAlphaComponent:0.2];
+            [outlineColor
+                colorWithAlphaComponent:0.2];
 
         self.selectedViewOverlay.layer.borderColor =
             outlineColor.CGColor;
 
         self.selectedViewOverlay.frame =
-            [self.view
-                convertRect:selectedView.bounds
-                  fromView:selectedView];
+            [self
+                frameInLocalCoordinatesForView:selectedView];
 
         [self.view
             bringSubviewToFront:self.selectedViewOverlay];
@@ -401,10 +459,53 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     }
 
     [self updateButtonStates];
+
+    /*
+     * Publish the canonical AVX512/FLEX selection.
+     *
+     * MRzefv observes this notification for ordinary selection changes.
+     */
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:
+            AVX512ExplorerSelectedViewDidChangeNotification
+                      object:self
+                    userInfo:@{
+        AVX512ExplorerSelectedViewUserInfoKey:
+            selectedView ?: [NSNull null]
+    }];
+
+    /*
+     * Complete an active MRzefv live-selection request.
+     *
+     * Dispatching onto the next main-run-loop turn ensures that the
+     * Explorer's selection overlay and toolbar state are already updated
+     * before MRzefv gets control back.
+     */
+    if (selectedView &&
+        self.pendingLiveSelectionCompletion) {
+
+        void (^completion)(UIView *) =
+            self.pendingLiveSelectionCompletion;
+
+        self.pendingLiveSelectionCompletion = nil;
+
+        UIView *newlySelectedView =
+            selectedView;
+
+        dispatch_async(
+            dispatch_get_main_queue(), ^{
+
+            completion(newlySelectedView);
+        });
+    }
 }
 
-- (void)setViewsAtTapPoint:(NSArray<UIView *> *)viewsAtTapPoint {
-    if ([_viewsAtTapPoint isEqual:viewsAtTapPoint]) {
+- (void)setViewsAtTapPoint:
+    (NSArray<UIView *> *)viewsAtTapPoint {
+
+    if ([_viewsAtTapPoint
+            isEqual:viewsAtTapPoint]) {
+
         return;
     }
 
@@ -415,14 +516,17 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         }
     }
 
-    _viewsAtTapPoint = viewsAtTapPoint;
+    _viewsAtTapPoint =
+        [viewsAtTapPoint copy];
 
     for (UIView *view in viewsAtTapPoint) {
         [self beginObservingView:view];
     }
 }
 
-- (void)setCurrentMode:(AVX512ExplorerMode)currentMode {
+- (void)setCurrentMode:
+    (AVX512ExplorerMode)currentMode {
+
     if (_currentMode == currentMode) {
         return;
     }
@@ -432,6 +536,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     switch (currentMode) {
 
         case AVX512ExplorerModeDefault: {
+
             [self removeAndClearOutlineViews];
 
             self.viewsAtTapPoint = nil;
@@ -442,6 +547,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         }
 
         case AVX512ExplorerModeSelect: {
+
             for (NSValue *key
                  in self.outlineViewsForVisibleViews) {
 
@@ -455,6 +561,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         }
 
         case AVX512ExplorerModeMove: {
+
             for (NSValue *key
                  in self.outlineViewsForVisibleViews) {
 
@@ -477,13 +584,15 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 #pragma mark - View Tracking
 
 - (void)beginObservingView:(UIView *)view {
+
     if (!view ||
         [self.observedViews containsObject:view]) {
 
         return;
     }
 
-    for (NSString *keyPath in self.viewKeyPathsToTrack) {
+    for (NSString *keyPath
+         in self.viewKeyPathsToTrack) {
 
         [view
             addObserver:self
@@ -496,24 +605,23 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)stopObservingView:(UIView *)view {
+
     if (!view ||
         ![self.observedViews containsObject:view]) {
 
         return;
     }
 
-    for (NSString *keyPath in self.viewKeyPathsToTrack) {
+    for (NSString *keyPath
+         in self.viewKeyPathsToTrack) {
 
         @try {
+
             [view
                 removeObserver:self
                 forKeyPath:keyPath];
+
         } @catch (__unused NSException *exception) {
-            /*
-             * A view may have been removed/deallocated while the
-             * explorer was transitioning. Avoid crashing the inspector
-             * during cleanup.
-             */
         }
     }
 
@@ -521,16 +629,18 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (NSArray<NSString *> *)viewKeyPathsToTrack {
-    static NSArray<NSString *> *trackedViewKeyPaths = nil;
 
+    static NSArray<NSString *> *trackedViewKeyPaths;
     static dispatch_once_t onceToken;
 
     dispatch_once(&onceToken, ^{
-        NSString *frameKeyPath =
-            NSStringFromSelector(@selector(frame));
 
         trackedViewKeyPaths =
-            @[frameKeyPath];
+            @[
+                NSStringFromSelector(
+                    @selector(frame)
+                )
+            ];
     });
 
     return trackedViewKeyPaths;
@@ -541,12 +651,16 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                         change:(NSDictionary<NSString *, id> *)change
                        context:(void *)context {
 
-    [self updateOverlayAndDescriptionForObjectIfNeeded:object];
+    [self
+        updateOverlayAndDescriptionForObjectIfNeeded:object];
 }
 
-- (void)updateOverlayAndDescriptionForObjectIfNeeded:(id)object {
+- (void)updateOverlayAndDescriptionForObjectIfNeeded:
+    (id)object {
+
     NSUInteger indexOfView =
-        [self.viewsAtTapPoint indexOfObject:object];
+        [self.viewsAtTapPoint
+            indexOfObject:object];
 
     if (indexOfView != NSNotFound) {
 
@@ -554,14 +668,17 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
             self.viewsAtTapPoint[indexOfView];
 
         NSValue *key =
-            [NSValue valueWithNonretainedObject:view];
+            [NSValue
+                valueWithNonretainedObject:view];
 
         UIView *outline =
             self.outlineViewsForVisibleViews[key];
 
         if (outline) {
+
             outline.frame =
-                [self frameInLocalCoordinatesForView:view];
+                [self
+                    frameInLocalCoordinatesForView:view];
         }
     }
 
@@ -572,29 +689,40 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                 descriptionForView:self.selectedView
                 includingFrame:YES];
 
-        CGRect selectedViewOutlineFrame =
-            [self frameInLocalCoordinatesForView:self.selectedView];
+        if (self.selectedViewOverlay) {
 
-        self.selectedViewOverlay.frame =
-            selectedViewOutlineFrame;
+            self.selectedViewOverlay.frame =
+                [self
+                    frameInLocalCoordinatesForView:
+                        self.selectedView];
+        }
     }
 }
 
-- (CGRect)frameInLocalCoordinatesForView:(UIView *)view {
+- (CGRect)frameInLocalCoordinatesForView:
+    (UIView *)view {
+
+    if (!view) {
+        return CGRectZero;
+    }
+
     CGRect frameInWindow =
-        [view convertRect:view.bounds
-                  toView:nil];
+        [view
+            convertRect:view.bounds
+                 toView:nil];
 
     return
         [self.view
             convertRect:frameInWindow
-                  fromView:nil];
+                 fromView:nil];
 }
 
 - (void)keyboardShown:(NSNotification *)notif {
+
     CGRect keyboardFrame =
-        [notif.userInfo[UIKeyboardFrameEndUserInfoKey]
-            CGRectValue];
+        [notif.userInfo[
+            UIKeyboardFrameEndUserInfoKey
+        ] CGRectValue];
 
     CGRect toolbarFrame =
         self.explorerToolbar.frame;
@@ -613,7 +741,8 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                           delay:0
          usingSpringWithDamping:1
           initialSpringVelocity:0.5
-                        options:UIViewAnimationOptionCurveEaseOut
+                        options:
+                            UIViewAnimationOptionCurveEaseOut
                      animations:^{
 
             [self
@@ -627,6 +756,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 #pragma mark - Toolbar Buttons
 
 - (void)setupToolbarActions {
+
     AVX512ExplorerToolbar *toolbar =
         self.explorerToolbar;
 
@@ -691,21 +821,26 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
  forControlEvents:UIControlEventTouchUpInside];
 }
 
-- (void)selectButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)selectButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     [self toggleSelectTool];
 }
 
-- (void)hierarchyButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)hierarchyButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     [self toggleViewsTool];
 }
 
 - (UIWindow *)statusWindow {
+
     if (!@available(iOS 16, *)) {
 
         NSString *statusBarString =
-            [NSString stringWithFormat:
-                @"%@arWindow",
-                @"_statusB"];
+            [NSString
+                stringWithFormat:@"%@arWindow",
+                                 @"_statusB"];
 
         return
             [UIApplication.sharedApplication
@@ -715,10 +850,12 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     return nil;
 }
 
-- (void)recentButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)recentButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     NSAssert(
         AVX512TabList.sharedList.activeTab,
-        @"There must be a need to have an"
+        @"There must be an active tab."
     );
 
     [self
@@ -728,25 +865,35 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                   completion:nil];
 }
 
-- (void)moveButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)moveButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     [self toggleMoveTool];
 }
 
-- (void)globalsButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)globalsButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     [self toggleMenuTool];
 }
 
-- (void)closeButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)closeButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     self.currentMode =
         AVX512ExplorerModeDefault;
+
+    self.pendingLiveSelectionCompletion = nil;
 
     [self.delegate
         explorerViewControllerDidFinish:self];
 }
 
-#pragma mark - Second second line, 2nd row tool button push
+#pragma mark - Second Row Tool Buttons
 
-- (void)classdumpButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)classdumpButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     UCClassSearchViewController *searchVC =
         [[UCClassSearchViewController alloc] init];
 
@@ -763,7 +910,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                    completion:nil];
 }
 
-- (void)hookGenButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)hookGenButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     AVX512HookTemplateGenerator *gen =
         [[AVX512HookTemplateGenerator alloc] init];
 
@@ -781,10 +930,11 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)exportAllHeaders {
+
     UIAlertController *confirmAlert =
         [UIAlertController
-            alertControllerWithTitle:@"First front of the first-first to"
-                             message:@"Are you sure that all class headhead files should be exported for the export of each category"
+            alertControllerWithTitle:@"Export Headers"
+                             message:@"Export all discovered class headers?"
                       preferredStyle:UIAlertControllerStyleAlert];
 
     [confirmAlert
@@ -797,14 +947,14 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [confirmAlert
         addAction:
             [UIAlertAction
-                actionWithTitle:@"OK is set to confirm"
+                actionWithTitle:@"Export"
                           style:UIAlertActionStyleDefault
                         handler:^(UIAlertAction *action) {
 
         UIAlertController *progressAlert =
             [UIAlertController
-                alertControllerWithTitle:@"xx.h"
-                                 message:@"Exporting to export class headfirst first-file in category..."
+                alertControllerWithTitle:@"Exporting Headers"
+                                 message:@"Preparing class headers..."
                           preferredStyle:UIAlertControllerStyleAlert];
 
         [self
@@ -819,7 +969,8 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                 dispatch_async(
                     dispatch_get_main_queue(), ^{
 
-                    progressAlert.message = text;
+                    progressAlert.message =
+                        text;
                 });
 
             } completion:
@@ -837,16 +988,16 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                             UIAlertController *errAlert =
                                 [UIAlertController
                                     alertControllerWithTitle:
-                                        @"This failed failure to fail for the"
-                                    message:error.localizedDescription
+                                        @"Export Failed"
+                                    message:
+                                        error.localizedDescription
                                     preferredStyle:
                                         UIAlertControllerStyleAlert];
 
                             [errAlert
                                 addAction:
                                     [UIAlertAction
-                                        actionWithTitle:
-                                            @"OK is set to confirm"
+                                        actionWithTitle:@"OK"
                                         style:
                                             UIAlertActionStyleDefault
                                         handler:nil]];
@@ -880,9 +1031,12 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                    completion:nil];
 }
 
-- (void)decryptButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)decryptButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     NSString *bundleID =
-        [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        [[NSBundle mainBundle] bundleIdentifier]
+            ?: @"unknown";
 
     DatabaseManager *db =
         [DatabaseManager sharedManager];
@@ -902,8 +1056,10 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         UIAlertController *alert =
             [UIAlertController
                 alertControllerWithTitle:@"Capture"
-                                 message:@"Capture logs network requests, crypto calls, and keys. Enable it?"
-                          preferredStyle:UIAlertControllerStyleAlert];
+                                 message:
+                                    @"Capture logs network requests, crypto calls, and keys. Enable it?"
+                          preferredStyle:
+                            UIAlertControllerStyleAlert];
 
         [alert
             addAction:
@@ -945,7 +1101,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     }
 }
 
-- (void)disassemblerButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)disassemblerButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     UCClassSearchViewController *searchVC =
         [UCClassSearchViewController
             searchViewControllerWithMode:
@@ -965,18 +1123,21 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)showDisasmAddressDialog {
+
     UIAlertController *alert =
         [UIAlertController
-            alertControllerWithTitle:@"Enter the entry address 'sint"
-                             message:@"Enter the RAM memory address (six hex) to enter a repository ent"
-                      preferredStyle:UIAlertControllerStyleAlert];
+            alertControllerWithTitle:@"Enter Address"
+                             message:
+                                @"Enter a hexadecimal memory address."
+                      preferredStyle:
+                        UIAlertControllerStyleAlert];
 
     [alert
         addTextFieldWithConfigurationHandler:
             ^(UITextField *textField) {
 
         textField.placeholder =
-            @", and all the 0x100001234";
+            @"0x100001234";
 
         textField.keyboardType =
             UIKeyboardTypeASCIICapable;
@@ -998,8 +1159,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [alert
         addAction:
             [UIAlertAction
-                actionWithTitle:
-                    @"The compilation and the comparison of re"
+                actionWithTitle:@"Open"
                           style:UIAlertActionStyleDefault
                         handler:^(UIAlertAction *action) {
 
@@ -1049,12 +1209,16 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                    completion:nil];
 }
 
-- (void)filzaButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)filzaButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     [UCFilzaTool
         presentFilzaPanelFromViewController:self];
 }
 
-- (void)protectionButtonTapped:(AVX512ExplorerToolbarItem *)sender {
+- (void)protectionButtonTapped:
+    (AVX512ExplorerToolbarItem *)sender {
+
     [UCAppProtectionTool enableWithSetup];
 
     [UCAppProtectionTool
@@ -1063,6 +1227,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)updateButtonStates {
+
     AVX512ExplorerToolbar *toolbar =
         self.explorerToolbar;
 
@@ -1091,6 +1256,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 #pragma mark - Toolbar Dragging
 
 - (void)setupToolbarGestures {
+
     AVX512ExplorerToolbar *toolbar =
         self.explorerToolbar;
 
@@ -1163,7 +1329,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                                 handleToolbarShowViewControllersGesture:)]];
 }
 
-- (void)handleToolbarPanGesture:(UIPanGestureRecognizer *)panGR {
+- (void)handleToolbarPanGesture:
+    (UIPanGestureRecognizer *)panGR {
+
     switch (panGR.state) {
 
         case UIGestureRecognizerStateBegan:
@@ -1398,6 +1566,10 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         [self.viewsAtTapPoint
             indexOfObject:self.selectedView];
 
+    if (currentIdx == NSNotFound) {
+        currentIdx = 0;
+    }
+
     CGFloat locationX =
         [sender locationInView:self.view].x;
 
@@ -1444,13 +1616,15 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                     locationX;
             }
 
-            if (currentIdx != newSelection) {
+            if (currentIdx != newSelection &&
+                newSelection >= 0 &&
+                newSelection <
+                    self.viewsAtTapPoint.count) {
 
                 self.selectedView =
                     self.viewsAtTapPoint[newSelection];
 
-                [self
-                    actuateSelectionChangedFeedback];
+                [self actuateSelectionChangedFeedback];
             }
 
             break;
@@ -1462,6 +1636,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)actuateSelectionChangedFeedback {
+
     if (@available(iOS 10.0, *)) {
         [self.selectionFBG selectionChanged];
     }
@@ -1473,25 +1648,29 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [self removeAndClearOutlineViews];
 
     self.viewsAtTapPoint =
-        [self viewsAtPoint:
-            selectionPointInWindow
+        [self
+            viewsAtPoint:
+                selectionPointInWindow
             skipHiddenViews:NO];
 
     NSArray<UIView *> *visibleViewsAtTapPoint =
-        [self viewsAtPoint:
-            selectionPointInWindow
+        [self
+            viewsAtPoint:
+                selectionPointInWindow
             skipHiddenViews:YES];
 
     NSMutableDictionary<NSValue *, UIView *> *
         newOutlineViewsForVisibleViews =
             [NSMutableDictionary new];
 
-    for (UIView *view in visibleViewsAtTapPoint) {
+    for (UIView *view
+         in visibleViewsAtTapPoint) {
 
         UIView *outlineView =
             [self outlineViewForView:view];
 
-        [self.view addSubview:outlineView];
+        [self.view
+            addSubview:outlineView];
 
         NSValue *key =
             [NSValue
@@ -1506,13 +1685,17 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         newOutlineViewsForVisibleViews;
 
     /*
-     * This assignment is the central selection point.
+     * This is the canonical selection operation.
      *
-     * setSelectedView: now publishes the exact UIView to MRzefv.
+     * setSelectedView:
+     *   1. updates the existing AVX512/FLEX overlay
+     *   2. publishes the selection notification
+     *   3. completes an MRzefv pending selection request
      */
     self.selectedView =
-        [self viewForSelectionAtPoint:
-            selectionPointInWindow];
+        [self
+            viewForSelectionAtPoint:
+                selectionPointInWindow];
 
     [self.view
         bringSubviewToFront:self.explorerToolbar];
@@ -1520,9 +1703,12 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     [self updateButtonStates];
 }
 
-- (UIView *)outlineViewForView:(UIView *)view {
+- (UIView *)outlineViewForView:
+    (UIView *)view {
+
     CGRect outlineFrame =
-        [self frameInLocalCoordinatesForView:view];
+        [self
+            frameInLocalCoordinatesForView:view];
 
     UIView *outlineView =
         [[UIView alloc]
@@ -1538,16 +1724,14 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
     outlineView.layer.borderWidth =
         1.0;
 
-    /*
-     * Selection outlines must never intercept touches intended
-     * for the application.
-     */
-    outlineView.userInteractionEnabled = NO;
+    outlineView.userInteractionEnabled =
+        NO;
 
     return outlineView;
 }
 
 - (void)removeAndClearOutlineViews {
+
     for (NSValue *key
          in self.outlineViewsForVisibleViews) {
 
@@ -1646,6 +1830,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
             );
 
         if (subviewContainsPoint) {
+
             [subviewsAtPoint
                 addObject:subview];
         }
@@ -1745,6 +1930,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 #pragma mark - Safe Area Handling
 
 - (CGRect)viewSafeArea {
+
     CGRect safeArea =
         self.view.bounds;
 
@@ -1761,6 +1947,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)viewSafeAreaInsetsDidChange {
+
     if (@available(iOS 11.0, *)) {
 
         [super viewSafeAreaInsetsDidChange];
@@ -1806,14 +1993,14 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         UIView *presentedView =
             self.presentedViewController.view;
 
-        CGPoint pipvc =
+        CGPoint pointInPresentedView =
             [presentedView
                 convertPoint:pointInLocalCoordinates
                       fromView:self.view];
 
         UIView *hit =
             [presentedView
-                hitTest:pipvc
+                hitTest:pointInPresentedView
                 withEvent:nil];
 
         if (hit != nil) {
@@ -1867,9 +2054,6 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
                 AVX512ExplorerModeSelect;
         }
 
-        /*
-         * This also sends the MRzefv selection notification.
-         */
         self.selectedView =
             selectedView;
     }];
@@ -1946,6 +2130,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (BOOL)wantsWindowToBecomeKey {
+
     return self.window.previousKeyWindow != nil;
 }
 
@@ -2000,6 +2185,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 #pragma mark - Keyboard Shortcut Helpers
 
 - (void)toggleSelectTool {
+
     if (self.currentMode ==
         AVX512ExplorerModeSelect) {
 
@@ -2014,6 +2200,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)toggleMoveTool {
+
     if (self.currentMode ==
         AVX512ExplorerModeMove) {
 
@@ -2060,6 +2247,7 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
 }
 
 - (void)toggleMenuTool {
+
     [self
         toggleToolWithViewControllerProvider:
             ^UINavigationController *{
@@ -2102,9 +2290,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
         if (selectedViewIndex > 0) {
 
             self.selectedView =
-                [self.viewsAtTapPoint
-                    objectAtIndex:
-                        selectedViewIndex - 1];
+                self.viewsAtTapPoint[
+                    selectedViewIndex - 1
+                ];
         }
 
     } else {
@@ -2146,9 +2334,9 @@ typedef NS_ENUM(NSUInteger, AVX512ExplorerMode) {
             self.viewsAtTapPoint.count - 1) {
 
             self.selectedView =
-                [self.viewsAtTapPoint
-                    objectAtIndex:
-                        selectedViewIndex + 1];
+                self.viewsAtTapPoint[
+                    selectedViewIndex + 1
+                ];
         }
 
     } else {
