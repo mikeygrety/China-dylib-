@@ -1,16 +1,29 @@
 //
-//  FLEXManager+ThreeFingerTap.h
+//  AVX512Manager+ThreeFingerTap.h
 //  AVX512
 //
+//  Three-finger press-and-hold gesture support.
+//
+
 #import <UIKit/UIKit.h>
-@class AVX512Manager;
+#import "AVX512Manager.h"
+
+NS_ASSUME_NONNULL_BEGIN
+
 @interface AVX512Manager (ThreeFingerTap)
-/// Installs or updates the three-finger gesture on the active window.
+
+/// Installs or updates the three-finger press-and-hold gesture on the active window.
 - (void)avx512_setupGesture;
+
 /// Handles UIWindowDidBecomeKeyNotification.
 - (void)avx512_windowDidBecomeKey:(NSNotification *)notification;
+
 /// Handles UISceneDidActivateNotification.
 - (void)avx512_sceneDidActivate:(NSNotification *)notification;
+
 /// Finds the current foreground application window.
-- (UIWindow *)avx512_findTargetWindow;
+- (nullable UIWindow *)avx512_findTargetWindow;
+
 @end
+
+NS_ASSUME_NONNULL_END
