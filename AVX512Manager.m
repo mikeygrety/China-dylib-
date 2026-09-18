@@ -6,7 +6,7 @@
 //  Copyright (c) 2020 FLEX Team. All rights reserved.
 //
 
-#import "FLEXManager.h"
+#import "AVX512Manager.h"
 #import "FLEXUtility.h"
 #import "FLEXExplorerViewController.h"
 #import "FLEXWindow.h"
