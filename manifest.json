@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "generator": {
+    "name": "AVX512",
+    "product": "MRzefv",
+    "version": "1.0.0"
+  },
+  "build": {
+    "target": "MRzefvGenerated",
+    "sessionID": "__MRZEFV_SESSION_ID__",
+    "createdAt": "__ISO8601_TIMESTAMP__",
+    "architecture": "arm64"
+  },
+  "source": {
+    "header": "Sources/MRzefvGenerated.h",
+    "implementation": "Sources/MRzefvGenerated.m"
+  },
+  "operations": [],
+  "resources": [],
+  "integrity": {
+    "sourceHash": "__SOURCE_HASH__",
+    "manifestHash": "__MANIFEST_HASH__"
+  }
+}
